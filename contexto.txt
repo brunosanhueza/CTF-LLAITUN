@@ -1,0 +1,182 @@
+================================================================================
+CONTEXTO COMPLETO DEL PROYECTO: CTF AGUAS DEL VALLE S.A.
+(Actualizado con todos los cambios y decisiones de diseño al día de hoy)
+================================================================================
+
+Wena, aquí va el resumen maestro de todo lo que hemos hecho y lo que tenemos entre manos con este proyecto. Está escrito para que cualquiera (o yo mismo en una nueva sesión) cachemos de inmediato dónde estamos parados y qué falta.
+
+--------------------------------------------------------------------------------
+1. QUÉ ES ESTA WEA Y DE DÓNDE VENIMOS
+--------------------------------------------------------------------------------
+Este proyecto es una máquina / entorno simulado para un Capture The Flag (CTF). La idea central es simular la red corporativa y la red industrial (OT) de una empresa ficticia de tratamiento de agua llamada "Aguas del Valle S.A.".
+
+La gracia de este CTF es que los jugadores no solo hackean una web ordinaria, sino que terminan con acceso root en un servidor Ubuntu, y desde ahí ejecutan scripts Python que inyectan tramas Modbus TCP crudas a un PLC físico para provocar un daño real simulado (inundar un estanque en una maqueta a escala). Básicamente un escenario a lo Stuxnet pero con un estanque y una Raspberry Pi.
+
+Evolución del repositorio:
+Al principio tenías todo metido como en una licuadora (el típico script monolítico): el código web, el cliente Modbus, el control de la Raspberry y los scripts de los relés, todo junto.
+Después hiciste un refactor bacán separando el proyecto en dos microservicios reales:
+- `scada_web/`: Toda la parte web IT (Flask, HTML, CSS, BD, Docker).
+- `nodo_raspberry/`: Toda la parte OT física (el daemon de la Raspi que habla con el PLC).
+
+Hubo un momento donde quedaron las carpetas vacías (asustaste un poco jaja) porque borraste archivos en un commit pero no añadiste los de la nueva estructura. Se restauraron desde el HEAD^ sin drama.
+
+--------------------------------------------------------------------------------
+2. LA ARQUITECTURA ACTUAL (CÓMO ESTÁ LA MANO HOY)
+--------------------------------------------------------------------------------
+
+A) EL NODO WEB (scada_web/)
+Es la cara visible del CTF. Está dockerizado con su propio `docker-compose.yml` que levanta Flask y se conecta a un MySQL en `host.docker.internal`. Corre en el puerto 5000.
+
+Lo más pulento del nodo web es el `Dockerfile`. Cuando Docker buildea la imagen hace esto:
+    python -m compileall -b .
+    find . -type f -name "*.py" -delete
+
+Compila todo a `.pyc` y borra los fuentes. Esto obliga a los competidores a hacer forensics / ingeniería inversa robando el `app.pyc` para decompilarlo, porque el código fuente no existe adentro del contenedor. Filete para el CTF.
+
+El `web_scada_client.py` es el cliente Modbus de SOLO LECTURA de la web. Lee registros del PLC y los manda al dashboard por WebSockets (Socket.IO). La web nunca escribe al PLC directamente, solo lee telemetría.
+
+B) EL NODO OT / EDGE (nodo_raspberry/)
+Acá corre `rtu_daemon.py`. Esta es la mente maestra del sistema físico.
+- Monitorea sensores físicos VL53L0X (o los simula si no hay hardware).
+- Escribe los niveles de agua en el PLC (registros 17-20).
+- Controla el relé de la bomba (GPIO).
+- Implementa el límite de seguridad del 85%: si el agua supera ese nivel, corta la bomba.
+- Lee el Registro 0 del PLC cada 500ms. Si vale 768 (0x0300), IGNORA el límite del 85% y deja que el agua siga subiendo hasta el 100%.
+- Auto-reset autónomo: al llegar al 100% y estado INUNDACION_CRITICA, espera 10 segundos (para que el jugador capture la flag y vea el espectáculo) y luego limpia el Registro 0 del PLC y vuelve todo a nominal para el siguiente jugador. No hay que reiniciar nada a mano.
+
+C) BASE DE DATOS
+Dual: MySQL en producción Docker, SQLite como fallback local. El `db.py` la inicializa automáticamente al arrancar. La tabla `usuarios` tiene los campos normales (id, username, password_hash, nombre, rol, avatar_url).
+
+--------------------------------------------------------------------------------
+3. EL KILL CHAIN COMPLETO (6 DESAFÍOS - VERSIÓN FINAL REDISEÑADA)
+--------------------------------------------------------------------------------
+Ojo: esto es el estado DESEADO del CTF. Más abajo está el estado IMPLEMENTADO actual.
+
+DESAFÍO 1 — SQLi en el Login (Foothold)
+Los jugadores llegan al `/login` y en vez de probar credenciales a lo bruto, le mandan un sqlmap o hacen inyección manual. El endpoint de login es deliberadamente vulnerable (usa string concatenation en vez de queries parametrizadas para el campo username). Al dumpear la tabla `usuarios` ven 3 usuarios:
+    - operador         → bcrypt hash (no crackeable rápido)
+    - admin_scada      → bcrypt hash (no crackeable rápido)
+    - test             → hash débil crackeable con rockyou (bcrypt de "test123" o similar)
+
+El usuario "test" es el USUARIO FANTASMA. Fue una cuenta de soporte/pruebas que alguien creó para revisar la plataforma por dentro y nunca eliminó. Tiene rol `visitante`, casi sin permisos.
+
+DESAFÍO 2 — Endpoint Discovery + Usuario Fantasma
+Con las credenciales del usuario fantasma (`test` / `test123`) se loguean. Ven el portal pero casi no pueden hacer nada. Sin embargo, si inspeccionan el código fuente del HTML del `/portal` (que es la vista post-login), encuentran un comentario plantado que dice algo como:
+    <!-- TODO: juan cuando llegues revisa /mensajeria, te dejé el reporte de turno
+         ahí antes de que lo suban al sistema nuevo. no le digas a nadie jaja - carlos -->
+
+Ese comentario está plantado en el `portal.html` justo debajo del `</header>`, simulando una nota descuidada entre compañeros que quedó en el código. Con eso o con fuzzing encuentran el endpoint `/mensajeria`.
+
+DESAFÍO 3 — Mensajería Interna + Cifrado ROT47
+El endpoint `/mensajeria` requiere login (cualquier usuario autenticado puede verlo). Adentro hay una conversación inventada entre empleados de la planta. Entre los mensajes hay uno del usuario `op_scada` (un operador senior) que en algún punto de la conversación escribe algo cifrado en ROT47. El mensaje en claro dice algo así como su contraseña o una pista de acceso SSH. Al decodificarlo con ROT47 obtienen las credenciales SSH del usuario `op_scada` en el servidor Ubuntu.
+
+Ejemplo de mensaje cifrado en ROT47:
+    "oye carlos, por si acaso te mando lo mío: w@E6cX$9:A2k (para el túnel)"
+    → eso en ROT47 se ve como otro string que los jugadores tienen que reconocer y decodificar.
+
+DESAFÍO 4 — SSH como op_scada + Escalada a Root (SUID Buffer Overflow)
+Con las credenciales decodificadas hacen SSH al servidor Ubuntu como `op_scada`. Están dentro del sistema operativo pero con permisos limitados. Para llegar a root tienen que explotar un binario SUID vulnerable.
+
+El binario se llama algo como `/usr/local/bin/plc_diagnostic` y simula ser una herramienta de diagnóstico interna del sistema SCADA. Está compilado en C y tiene un stack buffer overflow clásico porque usa `gets()` sin validar el tamaño del input.
+
+Las protecciones del binario:
+    - ❌ Sin stack canary (-fno-stack-protector): no detecta el overflow
+    - ✅ NX habilitado: el stack NO es ejecutable, no sirve shellcode directo
+    - ❌ Sin PIE: direcciones de memoria fijas y predecibles
+    - ❌ ASLR desactivado en el sistema (realista para sistemas OT que priorizan estabilidad)
+
+Esto fuerza a hacer un ataque ret2libc:
+    1. find / -perm -4000 2>/dev/null → encuentran el binario
+    2. strings / file / ltrace → analizan qué hace
+    3. gdb + pattern_create → calculan el offset al return address
+    4. Arman el payload para llamar a system("/bin/sh") usando direcciones de libc
+    5. Ejecutan el payload → shell como root
+
+Es uno de los desafíos más difíciles del CTF. Requiere conocimiento de binary exploitation a nivel intermedio-avanzado (ret2libc). No es un sudo -l de 30 segundos.
+
+DESAFÍO 5 — Ataque Modbus desde Root (Inyección al PLC)
+Con shell de root en Ubuntu, el jugador puede ahora ejecutar scripts Python directamente contra el PLC en la red OT (192.168.60.10:502). Tienen que escribir o encontrar un script que haga:
+    - Conectarse al PLC por Modbus TCP (puerto 502)
+    - Ejecutar un Write Single Register (FC 0x06) al Registro 0 con valor 768 (0x0300)
+    - Esto anula el límite de seguridad del 85% en la Raspberry Pi
+    - La bomba sigue inyectando agua hasta el desborde
+
+El script mínimo sería algo así:
+    from pyModbusTCP.client import ModbusClient
+    c = ModbusClient(host="192.168.60.10", port=502, auto_open=True)
+    c.write_single_register(0, 768)
+
+DESAFÍO 6 — Volcado de Memoria PLC + Captura de Flag
+Con el override activo y el estanque en estado INUNDACION_CRITICA (nivel > 98%), los registros 1-16 del PLC tienen la flag codificada en ASCII. El jugador lee esos 16 registros con un Read Holding Registers (FC 0x03) desde el mismo script Python y decodifica el ASCII. La flag es:
+
+    CTF{0v3rfl0w_m0dbus_sc4d4_pwn3d}
+
+El dashboard en tiempo real (visible en /dashboard) muestra la inundación en vivo. 10 segundos después la Raspberry hace el auto-reset sola.
+
+--------------------------------------------------------------------------------
+4. ESTADO DE IMPLEMENTACIÓN ACTUAL (QUÉ ESTÁ HECHO Y QUÉ NO)
+--------------------------------------------------------------------------------
+
+✅ IMPLEMENTADO:
+- Arquitectura separada scada_web / nodo_raspberry
+- Dockerfile con compilación a .pyc y borrado de fuentes
+- docker-compose.yml funcional con MySQL
+- rtu_daemon.py con lógica de sensores, relés, bypass Modbus y auto-reset
+- web_scada_client.py con lectura de telemetría desde PLC
+- db.py con usuarios operador y admin_scada (bcrypt)
+- app.py con endpoints: /, /login, /logout, /portal, /portal/upload (limpio, sin ELEVATE_ROLE), /portal/download (LFI), /admin, /dashboard, /api/telemetria, /api/reset
+- Vulnerabilidad LFI activa en /portal/download?file= (os.path.join sin sanitizar)
+- Botón de descarga en portal.html apuntando a /portal/download?file=...
+- README.md
+- contexto.txt (este archivo)
+
+❌ PENDIENTE DE IMPLEMENTAR:
+- Hacer el login vulnerable a SQLi (cambiar query parametrizada a string concat)
+- Agregar usuario fantasma "test" a la DB con hash crackeable de "test123"
+- Crear endpoint /mensajeria con conversación inventada y mensaje ROT47 de op_scada
+- Plantar el comentario HTML en portal.html ("oye juan revisa /mensajeria...")
+- Crear usuario Linux op_scada en el servidor Ubuntu con su password SSH
+- Compilar el binario SUID vulnerable plc_diagnostic en C (ret2libc, sin canary, sin PIE, ASLR off)
+- Definir y generar las credenciales SSH de op_scada (las que van cifradas en ROT47 en /mensajeria)
+- Instalar pyModbusTCP en el Ubuntu para que desde root puedan lanzar el ataque
+- Actualizar documentación y scripts de ayuda
+
+--------------------------------------------------------------------------------
+5. VULNERABILIDADES CONFIRMADAS / ELIMINADAS
+--------------------------------------------------------------------------------
+
+ACTIVAS:
+- LFI en /portal/download?file= → Path Traversal, lectura de archivos del sistema
+- SQLi en /login → (pendiente de implementar)
+- SUID Buffer Overflow en /usr/local/bin/plc_diagnostic → (pendiente de implementar)
+- Modbus TCP sin autenticación → escritura directa al registro 0 del PLC
+
+ELIMINADAS / DESCARTADAS:
+- ELEVATE_ROLE=admin / ADMIN_OVERRIDE_AUTH: borrado del upload_file en app.py. El upload ahora es completamente limpio e inocente. Sirve solo como señuelo para descubrir el endpoint de descarga (LFI).
+- Cookie Forgery con SECRET_KEY: se descartó porque la escalada de privilegios ahora es por otra vía (SSH + SUID).
+- Consola Modbus Raw en /admin: se descartó como vector de ataque. El admin web ya no puede inyectar Modbus. El ataque al PLC SOLO se puede hacer desde root en Ubuntu.
+
+--------------------------------------------------------------------------------
+6. DETALLES TÉCNICOS IMPORTANTES QUE NO HAY QUE OLVIDAR
+--------------------------------------------------------------------------------
+
+- La SECRET_KEY de Flask está quemada en el código: 'aguas-del-valle-super-secret-key-2026-scada'
+- El PLC real escucha en 192.168.60.10:502 (Modbus TCP)
+- La Raspberry Pi corre rtu_daemon.py de forma autónoma. No depende del servidor web para nada.
+- El servidor web en Docker NO escribe al PLC. Solo lee telemetría para el dashboard.
+- La contraseña del MySQL está en el docker-compose.yml en texto plano: zacky5023 (es intencional, parte del CTF)
+- El cifrado del mensaje de op_scada en /mensajeria es ROT47 (decisión confirmada)
+- El usuario fantasma se llama "test" con contraseña "test123" (crackeable rapidísimo con rockyou)
+- El binario SUID vulnerable usa ret2libc (NX on, no canary, no PIE, ASLR off en el sistema)
+
+--------------------------------------------------------------------------------
+7. LOS SCRIPTS SUELTOS EN LA RAÍZ (CONTEXTO HISTÓRICO)
+--------------------------------------------------------------------------------
+También hay un montón de scripts tirados en la raíz del repo (rewrite_minimal_html.py, fix_css.py, rewrite_js.py, rebuild_dashboard.py, etc.). Básicamente son los scripts que usaste mientras iterabas el diseño del dashboard Kiosko. Pasaste de un diseño con fondos Frutiger Aero y radial gradients a un diseño iOS 7 minimalista, negro mate (#1c1c1e), sin border radius exagerados, con tarjetas limpias y barritas progresivas. Los scripts abrían los HTML/CSS con regex y los reescribían directamente. El dashboard tiene animación SVG del agua y todo reacciona en tiempo real por WebSockets (Socket.IO). Quedó muy bacán. Esos scripts ya cumplieron su función y son solo historial.
+
+--------------------------------------------------------------------------------
+8. RESUMEN EJECUTIVO PARA RETOMAR EN CUALQUIER MOMENTO
+--------------------------------------------------------------------------------
+Tienes un CTF innovador mezclando web hacking tradicional con explotación de protocolos industriales (Modbus TCP) y binary exploitation. El kill chain tiene 6 desafíos encadenados que van desde SQLi básico hasta buffer overflow con ret2libc y ataque OT directo al PLC. La arquitectura está bien separada en Docker (web) + Raspberry Pi (control físico). El auto-reset de la Raspi garantiza que el CTF sea rejugable sin intervención manual.
+
+Lo que falta es principalmente la implementación de los desafíos nuevos (SQLi, mensajería, SUID binario) que aún están solo diseñados pero no escritos en código. Todo lo demás funciona.

