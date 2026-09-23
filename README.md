@@ -51,6 +51,9 @@ Los participantes deberán encadenar múltiples vulnerabilidades para lograr el 
 
 ---
 
+
+<img width="220" height="287" alt="hatsune-miku-dance" src="https://github.com/user-attachments/assets/46bdc174-4467-4487-972e-acab3ff54569" />
+
 ## ⚠️ Advertencia Legal y de Seguridad
 
 Este entorno ha sido creado con fines **estrictamente educativos**. Contiene vulnerabilidades severas introducidas a propósito (como LFI, inyección insegura y exposición de claves). 
