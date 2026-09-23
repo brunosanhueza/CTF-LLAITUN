@@ -1,0 +1,23 @@
+========================================
+CREDENCIALES DE BASE DE DATOS Y SISTEMA
+========================================
+
+[ CONEXION MYSQL SERVER ]
+Host:       127.0.0.1 / host.docker.internal
+Puerto:     3306
+Usuario:    root
+Password:   zacky5023
+Base Datos: (Depende de MYSQL_DB en docker-compose, típicamente 'scada_db')
+
+[ USUARIOS DE LA APLICACION WEB (Tabla 'usuarios') ]
+Usuario 1:
+- Username: operador
+- Password: operador2026 (Hasheado en DB)
+- Rol:      operador
+
+Usuario 2:
+- Username: admin_scada
+- Password: Adm1n_Pl4nt4_S3cur3!# (Hasheado en DB)
+- Rol:      admin
+
+* NOTA: La cuenta fantasma (ej. 'test_diagnostico') con contraseña en texto plano está pendiente de inyectarse en el código de inicialización (init_db.py).

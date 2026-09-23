@@ -1,0 +1,20 @@
+# ==============================================================================
+# PROYECTO: AGUAS DEL VALLE S.A. (HMI Web SCADA)
+# Dependencias de Python (pip) para el Servidor Web (Ubuntu VM)
+# ==============================================================================
+
+# --- Servidor Web, REST API & WebSockets ---
+Flask>=2.3.0
+Flask-Cors>=4.0.0
+Flask-SocketIO>=5.3.6
+python-socketio>=5.11.0
+python-engineio>=4.9.0
+Werkzeug>=2.3.0
+simple-websocket>=1.0.0
+
+# --- Base de Datos ---
+PyMySQL>=1.1.0
+cryptography>=41.0.0
+
+# --- Cliente Modbus TCP (OT / PLC) ---
+pyModbusTCP>=0.2.1

@@ -1,0 +1,13 @@
+# ==============================================================================
+# PROYECTO: AGUAS DEL VALLE S.A. (Nodo IoT / PLC Simulator)
+# Dependencias de Python (pip) para la Raspberry Pi
+# ==============================================================================
+
+# --- Servidor Modbus TCP ---
+pyModbusTCP>=0.2.1
+
+# --- Hardware / Sensores ToF / GPIO ---
+adafruit-circuitpython-vl53l0x>=1.2.14
+adafruit-circuitpython-tca9548a>=0.8.0
+gpiozero>=2.0.1
+RPi.GPIO>=0.7.1

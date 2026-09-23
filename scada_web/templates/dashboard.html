@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>HMI SCADA - Monitor de Estanques</title>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+        /* iOS 7 Minimalist Flat Design (Full Page) */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        
+        body {
+            background-color: #000000;
+            color: #ffffff;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Minimal Header */
+        header {
+            background-color: #151516;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            height: 60px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 20px;
+            flex-shrink: 0;
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .header-title h1 {
+            font-size: 16px;
+            font-weight: 500;
+            letter-spacing: 1px;
+            color: #ffffff;
+            text-transform: uppercase;
+        }
+
+        .header-title .tag {
+            font-size: 12px;
+            color: #8e8e93;
+            border-left: 1px solid rgba(255,255,255,0.2);
+            padding-left: 12px;
+            text-transform: uppercase;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .btn-nav {
+            text-decoration: none;
+            color: #0a84ff;
+            font-size: 14px;
+            font-weight: 400;
+        }
+
+        .btn-nav:hover {
+            color: #409cff;
+        }
+
+        .status-badge {
+            font-size: 12px;
+            padding: 4px 8px;
+            border: 1px solid rgba(255,255,255,0.1);
+            color: #8e8e93;
+            text-transform: uppercase;
+        }
+
+        /* Layout Grid */
+        .dashboard-layout {
+            display: flex;
+            flex: 1;
+            width: 100%;
+            gap: 16px;
+            padding: 16px;
+            align-items: stretch;
+            height: calc(100vh - 60px); /* 60px is header */
+        }
+
+        /* Tanks Grid */
+        .tank-grid {
+            flex: 3;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 16px;
+            height: 100%;
+        }
+
+        /* Individual Tank */
+        .tank-container {
+            background-color: #151516;
+            border: 1px solid rgba(255,255,255,0.15);
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            height: 100%; /* Fill the grid cell entirely */
+        }
+
+        .tank-header {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+        }
+
+        .tank-title {
+            color: #8e8e93;
+            font-size: 14px;
+            font-weight: 500;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .tank-level-text {
+            color: #ffffff;
+            font-size: 48px;
+            font-weight: 200;
+            line-height: 1;
+        }
+
+        .tank-dist-text {
+            color: #ff3b30;
+            font-size: 16px;
+            font-weight: 400;
+            margin-top: 4px;
+        }
+
+        .water-fill {
+            width: 100%;
+            background-color: #0a84ff;
+            transition: height 0.3s linear, background-color 0.5s ease;
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            opacity: 0.9;
+            z-index: 2; /* below markers */
+        }
+        
+        .water-fill.warning { background-color: #ff9f0a; }
+        .water-fill.critical { background-color: #ff453a; opacity: 1; }
+        
+        .laser-beam {
+            position: absolute;
+            top: 0;
+            left: 80%;
+            width: 1px;
+            background-color: rgba(255, 59, 48, 0.8);
+            transform: translateX(-50%);
+            transition: height 0.3s linear;
+            z-index: 5;
+        }
+
+        .tank-markers {
+            position: absolute;
+            right: 0;
+            top: 0;
+            height: 100%;
+            width: 50px;
+            background-color: rgba(0, 0, 0, 0.45);
+            backdrop-filter: blur(4px);
+            border-left: 1px solid rgba(255,255,255,0.05);
+            pointer-events: none;
+            z-index: 10; /* Above water */
+        }
+
+        .marker {
+            position: absolute;
+            left: 0;
+            width: 100%;
+            height: 1px;
+            background-color: rgba(255,255,255,0.2);
+        }
+        .m-100 { top: 0%; background-color: #ff453a; height: 2px;}
+        .m-85 { top: 15%; background-color: #ff9f0a; }
+        .m-50 { top: 50%; }
+        .m-25 { top: 75%; }
+        
+        .marker-text {
+            position: absolute;
+            right: 4px;
+            width: 40px;
+            text-align: right;
+            transform: translateY(-50%);
+            font-size: 11px;
+            color: #8e8e93;
+            font-weight: 400;
+        }
+        /* Push 100% down so it doesn't clip */
+        .marker-text-100 { top: 0%; color: #ff453a; font-weight: 600; transform: translateY(2px); }
+        .marker-text-85 { top: 15%; color: #ff9f0a; }
+        .marker-text-50 { top: 50%; }
+        .marker-text-25 { top: 75%; }
+
+        /* Sidebar */
+        .minimal-sidebar {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            height: 100%;
+        }
+
+        .minimal-card {
+            background-color: #151516;
+            padding: 24px;
+            border: 1px solid rgba(255,255,255,0.15);
+            flex: 1;
+        }
+
+        .minimal-card h2 {
+            font-size: 14px;
+            color: #8e8e93;
+            text-transform: uppercase;
+            font-weight: 500;
+            margin: 0 0 20px 0;
+            letter-spacing: 1px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 12px;
+        }
+
+        .minimal-stat {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            font-size: 16px;
+        }
+
+        .minimal-stat .value {
+            font-weight: 400;
+            font-size: 18px;
+        }
+
+        .value.green { color: #32d74b; }
+        .value.red { color: #ff453a; }
+        .value.yellow { color: #ffd60a; }
+        .value.neutral { color: #8e8e93; }
+
+        .helper-text {
+            font-size: 13px;
+            color: #8e8e93;
+            margin-top: 24px;
+            line-height: 1.4;
+        }
+
+        /* Screen Vignette Overlay */
+        .vignette-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 9999;
+            transition: box-shadow 0.3s ease;
+            box-shadow: inset 0 0 0px transparent;
+        }
+        .vignette-warning {
+            box-shadow: inset 0 0 100px rgba(255, 159, 10, 0.4);
+        }
+        .vignette-critical {
+            box-shadow: inset 0 0 150px rgba(255, 69, 58, 0.6);
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="header-title">
+            <h1>Telemetría en Vivo</h1>
+            <div class="tag">Monitor de Estanques SCADA</div>
+        </div>
+        <div class="header-actions">
+            <a href="/login" class="btn-nav">Portal / Login</a>
+            <span id="hardware-badge" class="status-badge">SIMULADO</span>
+        </div>
+    </header>
+
+    <main class="dashboard-layout">
+        
+        <!-- COLUMNA IZQUIERDA: LOS 4 ESTANQUES RECTANGULARES -->
+        <div class="tank-grid">
+            
+            <!-- ESTANQUE 1 -->
+            <div class="tank-container">
+                <div class="tank-header">
+                    <div class="tank-title">ESTANQUE 1</div>
+                    <div class="tank-level-text"><span id="metric-level-1">25.0</span>%</div>
+                    <div class="tank-dist-text" id="metric-dist-1">170 mm</div>
+                </div>
+                <div class="laser-beam" id="laser-beam-1" style="height: 75%;"></div>
+                <div class="water-fill" id="water-fill-1" style="height: 25%;"></div>
+                <div class="tank-markers">
+                    <div class="marker m-100"></div><div class="marker-text marker-text-100">100%</div>
+                    <div class="marker m-85"></div><div class="marker-text marker-text-85">85%</div>
+                    <div class="marker m-50"></div><div class="marker-text marker-text-50">50%</div>
+                    <div class="marker m-25"></div><div class="marker-text marker-text-25">25%</div>
+                </div>
+            </div>
+
+            <!-- ESTANQUE 2 -->
+            <div class="tank-container">
+                <div class="tank-header">
+                    <div class="tank-title">ESTANQUE 2</div>
+                    <div class="tank-level-text"><span id="metric-level-2">25.0</span>%</div>
+                    <div class="tank-dist-text" id="metric-dist-2">170 mm</div>
+                </div>
+                <div class="laser-beam" id="laser-beam-2" style="height: 75%;"></div>
+                <div class="water-fill" id="water-fill-2" style="height: 25%;"></div>
+                <div class="tank-markers">
+                    <div class="marker m-100"></div><div class="marker-text marker-text-100">100%</div>
+                    <div class="marker m-85"></div><div class="marker-text marker-text-85">85%</div>
+                    <div class="marker m-50"></div><div class="marker-text marker-text-50">50%</div>
+                    <div class="marker m-25"></div><div class="marker-text marker-text-25">25%</div>
+                </div>
+            </div>
+
+            <!-- ESTANQUE 3 -->
+            <div class="tank-container">
+                <div class="tank-header">
+                    <div class="tank-title">ESTANQUE 3</div>
+                    <div class="tank-level-text"><span id="metric-level-3">25.0</span>%</div>
+                    <div class="tank-dist-text" id="metric-dist-3">170 mm</div>
+                </div>
+                <div class="laser-beam" id="laser-beam-3" style="height: 75%;"></div>
+                <div class="water-fill" id="water-fill-3" style="height: 25%;"></div>
+                <div class="tank-markers">
+                    <div class="marker m-100"></div><div class="marker-text marker-text-100">100%</div>
+                    <div class="marker m-85"></div><div class="marker-text marker-text-85">85%</div>
+                    <div class="marker m-50"></div><div class="marker-text marker-text-50">50%</div>
+                    <div class="marker m-25"></div><div class="marker-text marker-text-25">25%</div>
+                </div>
+            </div>
+
+            <!-- ESTANQUE 4 -->
+            <div class="tank-container">
+                <div class="tank-header">
+                    <div class="tank-title">ESTANQUE 4</div>
+                    <div class="tank-level-text"><span id="metric-level-4">25.0</span>%</div>
+                    <div class="tank-dist-text" id="metric-dist-4">170 mm</div>
+                </div>
+                <div class="laser-beam" id="laser-beam-4" style="height: 75%;"></div>
+                <div class="water-fill" id="water-fill-4" style="height: 25%;"></div>
+                <div class="tank-markers">
+                    <div class="marker m-100"></div><div class="marker-text marker-text-100">100%</div>
+                    <div class="marker m-85"></div><div class="marker-text marker-text-85">85%</div>
+                    <div class="marker m-50"></div><div class="marker-text marker-text-50">50%</div>
+                    <div class="marker m-25"></div><div class="marker-text marker-text-25">25%</div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- COLUMNA DERECHA: SIDEBAR MINIMALISTA -->
+        <div class="minimal-sidebar">
+            
+            <div class="minimal-card">
+                <h2>Niveles Generales</h2>
+                <div class="minimal-stat">
+                    <span>Estado Global</span>
+                    <span id="system-state-tag" class="value green">NOMINAL</span>
+                </div>
+                <div class="minimal-stat">
+                    <span>Modbus Interlock</span>
+                    <span id="interlock-badge" class="value green">ENCLAVADO</span>
+                </div>
+                
+                <div class="helper-text">
+                    El auto-restablecimiento del sistema está configurado en 100% de nivel hídrico. Retardo de evacuación: 10s.
+                </div>
+            </div>
+            
+            <div class="minimal-card">
+                <h2>Instrumentación PLC</h2>
+                <div class="minimal-stat">
+                    <span>Bomba Principal</span>
+                    <span id="metric-pump" class="value green">ON</span>
+                </div>
+                <div class="minimal-stat">
+                    <span>Relé (GPIO)</span>
+                    <span id="metric-relay-state" class="value yellow">OFF</span>
+                </div>
+                
+                <div class="helper-text">
+                    Target PLC IP:<br>
+                    <strong id="plc-target-ip" style="color:#ffffff; font-size:15px; margin-top:4px; display:inline-block;">10.10.10.4:502</strong>
+                </div>
+            </div>
+            
+        </div>
+    </main>
+
+    <div id="screen-vignette" class="vignette-overlay"></div>
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>

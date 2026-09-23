@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Aguas del Valle - Panel de Ingeniería SCADA (Admin)</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/static.css') }}">
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+<body>
+
+    <div class="scada-container">
+        <header class="scada-header">
+            <div class="header-titles">
+                <div class="scada-tag text-red">PANEL DE INGENIERÍA SCADA // MODO ROOT</div>
+                <h1>ADMINISTRACIÓN INDUSTRIAL</h1>
+            </div>
+            <div class="header-badges">
+                <a href="/portal" class="btn-nav">Portal Empleados</a>
+                <a href="/dashboard" class="btn-nav">Monitor Estanque</a>
+                <a href="/logout" class="btn-nav btn-nav-logout">Salir</a>
+            </div>
+        </header>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-container">
+                    {% for category, message in messages %}
+                        <div class="flash-alert flash-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <main class="scada-grid">
+            
+            <section class="card card-full">
+                <div class="card-header-actions">
+                    <h2>Consola de Estado de Ingeniería</h2>
+                    <span class="state-pill state-danger">MODO MANTENIMIENTO OT</span>
+                </div>
+                <div class="raw-response-box">
+                    <div class="raw-response-header">
+                        <strong>Nodos de Red y Controladores Industriales</strong>
+                        <span class="state-pill state-normal">EN LÍNEA</span>
+                    </div>
+
+                    <div class="raw-fields-grid">
+                        <div class="raw-field">
+                            <label>Controlador PLC Primario:</label>
+                            <code>192.168.60.10:502 (Modbus TCP)</code>
+                        </div>
+                        <div class="raw-field">
+                            <label>Controlador de Campo:</label>
+                            <code>RPi4-OT-NODE-01 (I2C / GPIO)</code>
+                        </div>
+                        <div class="raw-field">
+                            <label>Sensor Nivel Estanque:</label>
+                            <code>VL53L0X Time-of-Flight (Laser)</code>
+                        </div>
+                        <div class="raw-field">
+                            <label>Actuador de Bomba:</label>
+                            <code>Relé Industrial (Activo Bajo)</code>
+                        </div>
+                    </div>
+
+                    <div class="raw-log-msg" style="margin-top: 15px;">
+                        [!] Las operaciones de diagnóstico directo sobre el bus Modbus deben realizarse vía socket TCP en el puerto 502.
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+</body>
+</html>

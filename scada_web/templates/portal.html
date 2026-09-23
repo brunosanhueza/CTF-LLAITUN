@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Aguas del Valle - Portal del Operador</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/static.css') }}">
+</head>
+<body>
+
+    <div class="scada-container">
+        <header class="scada-header">
+            <div class="header-titles">
+                <div class="scada-tag">PORTAL DEL TRABAJADOR // OPERACIONES</div>
+                <h1>AGUAS DEL VALLE S.A.</h1>
+            </div>
+            <div class="header-badges">
+                <a href="/dashboard" class="btn-nav">Monitor Estanque</a>
+                {% if usuario.rol == 'admin' %}
+                    <a href="/admin" class="btn-nav btn-nav-admin">Panel Admin SCADA</a>
+                {% endif %}
+                <a href="/logout" class="btn-nav btn-nav-logout">Cerrar Sesión</a>
+            </div>
+        </header>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-container">
+                    {% for category, message in messages %}
+                        <div class="flash-alert flash-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <main class="scada-grid">
+            
+            <section class="card">
+                <div class="card-header-actions">
+                    <h2>Perfil de Usuario</h2>
+                    <span class="state-pill {% if usuario.rol == 'admin' %}state-danger{% else %}state-normal{% endif %}">
+                        ROL: {{ usuario.rol | upper }}
+                    </span>
+                </div>
+                <div class="user-profile-box">
+                    <div class="user-details">
+                        <h3>{{ usuario.nombre }}</h3>
+                        <p class="text-secondary">Usuario: <strong>{{ usuario.username }}</strong></p>
+                        <p class="text-secondary">Nodo Asignado: <strong>RPi4-OT-NODE-01</strong></p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card">
+                <h2>Estado de Infraestructura</h2>
+                <div class="status-indicator-row">
+                    <span class="status-label">PLC Bomba (Modbus TCP):</span>
+                    <strong class="text-cyan">192.168.60.10:502</strong>
+                </div>
+                <div class="status-indicator-row">
+                    <span class="status-label">Sensor Nivel (Raspberry Pi):</span>
+                    <strong class="text-green">VL53L0X (ToF I2C)</strong>
+                </div>
+                <div class="status-indicator-row">
+                    <span class="status-label">Nivel de Acceso:</span>
+                    <span class="text-yellow">{% if usuario.rol == 'admin' %}Control Total (Escritura){% else %}Lectura / Reportes{% endif %}</span>
+                </div>
+            </section>
+
+            <section class="card card-full">
+                <div class="card-header-actions">
+                    <h2>Manual de Operación Técnica: Controlador PLC Bomba 1</h2>
+                    <span class="state-pill state-neutral">DOC-MODBUS-REV2.4</span>
+                </div>
+                <div class="manual-box">
+                    <p class="manual-intro">
+                        <strong>Especificación de Mapa de Memoria (PLC 192.168.60.10:502):</strong>
+                    </p>
+                    <table class="manual-table">
+                        <thead>
+                            <tr>
+                                <th>Registro (Offset)</th>
+                                <th>Tipo</th>
+                                <th>Acceso</th>
+                                <th>Descripción Operativa</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>0</code> (40001)</td>
+                                <td>Holding Register</td>
+                                <td>Lectura / Escritura</td>
+                                <td><strong>Registro de Modo de Control:</strong> Configuración de modos de bombeo y enclavamientos de seguridad del sistema.</td>
+                            </tr>
+                            <tr>
+                                <td><code>1..16</code> (40002..40017)</td>
+                                <td>Holding Register</td>
+                                <td>Solo Lectura (FC 0x03)</td>
+                                <td><strong>Bloque de Diagnóstico y Calibración:</strong> Registro de fábrica y parámetros internos del controlador.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <p class="manual-warning">
+                        [!] Aviso de Seguridad: Las modificaciones directas a la memoria del PLC deben realizarse exclusivamente mediante clientes autorizados Modbus TCP en el puerto industrial 502.
+                    </p>
+                </div>
+            </section>
+
+            <section class="card">
+                <h2>Cargar Reporte de Turno / Documento</h2>
+                <form action="/portal/upload" method="POST" enctype="multipart/form-data" class="upload-form">
+                    <div class="form-group">
+                        <label for="titulo">Título del Reporte</label>
+                        <input type="text" id="titulo" name="titulo" placeholder="Ej: Bitácora de mantenimiento" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="descripcion">Observaciones</label>
+                        <textarea id="descripcion" name="descripcion" rows="2" placeholder="Detalles de la inspección..."></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="archivo">Archivo Adjunto (.txt, .pdf, .sh, .py)</label>
+                        <input type="file" id="archivo" name="archivo" required>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">
+                        Subir y Procesar Archivo
+                    </button>
+                </form>
+            </section>
+
+            <section class="card">
+                <h2>Bitácoras de Operación Registradas</h2>
+                <div class="bitacoras-list">
+                    {% for b in bitacoras %}
+                        <div class="bitacora-item">
+                            <div class="bitacora-header">
+                                <strong>{{ b.titulo }}</strong>
+                                <small class="text-secondary">{{ b.fecha }}</small>
+                            </div>
+                            <p class="bitacora-desc">{{ b.descripcion }}</p>
+                            {% if b.archivo_adjunto %}
+                                <div class="bitacora-file">
+                                    [+] Adjunto: <code>{{ b.archivo_adjunto }}</code>
+                                    <a href="/portal/download?file={{ b.archivo_adjunto }}" style="color: #4a90e2; text-decoration: none; margin-left: 10px; font-weight: bold;">[Descargar]</a>
+                                </div>
+                            {% endif %}
+                            <small class="text-secondary">Registrado por: {{ b.autor }} ({{ b.rol }})</small>
+                        </div>
+                    {% else %}
+                        <p class="text-secondary">No hay bitácoras registradas.</p>
+                    {% endfor %}
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+</body>
+</html>
