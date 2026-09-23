@@ -1,4 +1,3 @@
-<img width="220" height="287" alt="hatsune-miku-dance" src="https://github.com/user-attachments/assets/46bdc174-4467-4487-972e-acab3ff54569" />
 # 💧 Aguas del Valle S.A. - CTF SCADA (IT/OT)
 
 ¡Bienvenido al entorno de simulación de **Aguas del Valle S.A.**! Este proyecto es un desafío tipo **Capture The Flag (CTF)** diseñado para entrenar habilidades de ciberseguridad en infraestructuras críticas (ICS/OT) e IT.
