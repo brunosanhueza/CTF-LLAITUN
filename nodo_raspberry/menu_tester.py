@@ -20,7 +20,7 @@ class CTFTester(QWidget):
 
     def initUI(self):
         self.setWindowTitle("CTF Aguas del Valle - Panel de Testeo Visual")
-        self.resize(600, 700)
+        self.resize(650, 750)
         self.setStyleSheet("font-size: 11pt;")
         
         layout = QVBoxLayout()
@@ -94,7 +94,8 @@ class CTFTester(QWidget):
         layout.addWidget(grp_bombas)
         
         # --- SECCIÓN 4: CONTROL DE COLORES (TIRAS LED) ---
-        grp_colores = QGroupBox("Personalización Tiras LED (SK6812 / WS2812B)")
+        grp_colores = QGroupBox("Animaciones de Tiras LED (SK6812 / WS2812B)")
+        vbox_colores = QVBoxLayout()
         hbox_colores = QHBoxLayout()
         
         lbl_t1 = QLabel("Tira 1 (Agua/CTF):")
@@ -113,7 +114,24 @@ class CTFTester(QWidget):
         hbox_colores.addWidget(self.combo_t1)
         hbox_colores.addWidget(lbl_t2)
         hbox_colores.addWidget(self.combo_t2)
-        grp_colores.setLayout(hbox_colores)
+        
+        hbox_velocidad = QHBoxLayout()
+        lbl_vel = QLabel("Velocidad Animación (ms por LED):")
+        lbl_vel.setFixedWidth(250)
+        self.sl_vel = QSlider(Qt.Horizontal)
+        self.sl_vel.setRange(10, 200) # Rápido a lento
+        self.sl_vel.setValue(60)
+        self.sl_vel.setInvertedAppearance(True) # Para que más a la derecha sea más rápido
+        self.lbl_vel_val = QLabel("60 ms")
+        self.sl_vel.valueChanged.connect(self.change_led_speed)
+        
+        hbox_velocidad.addWidget(lbl_vel)
+        hbox_velocidad.addWidget(self.sl_vel)
+        hbox_velocidad.addWidget(self.lbl_vel_val)
+        
+        vbox_colores.addLayout(hbox_colores)
+        vbox_colores.addLayout(hbox_velocidad)
+        grp_colores.setLayout(vbox_colores)
         layout.addWidget(grp_colores)
         
         # --- SECCIÓN 5: SLIDERS DE SIMULACIÓN ---
@@ -147,7 +165,8 @@ class CTFTester(QWidget):
         layout.addWidget(grp_niveles)
         
         self.setLayout(layout)
-        self.change_led_color() # Aplicar colores iniciales
+        self.change_led_color()
+        self.change_led_speed()
 
     def _fill_color_combo(self, combo):
         combo.addItem("Azul", (0, 0, 255))
@@ -190,7 +209,6 @@ class CTFTester(QWidget):
         self.gateway.hw.modo_manual_bombas = activo
         for btn in self.btn_bombas:
             btn.setEnabled(activo)
-        # Sincronizar el estado actual al hardware
         if activo:
             for i, btn in enumerate(self.btn_bombas):
                 self.gateway.hw.set_bomba(i, btn.isChecked())
@@ -210,6 +228,11 @@ class CTFTester(QWidget):
         c2 = self.combo_t2.itemData(self.combo_t2.currentIndex())
         self.gateway.color_tira1_override = c1
         self.gateway.color_tira2_override = c2
+
+    def change_led_speed(self):
+        vel = self.sl_vel.value()
+        self.lbl_vel_val.setText(f"{vel} ms")
+        self.gateway.velocidad_tiras_override = vel
 
     def toggle_override(self, state):
         for sl in self.sliders:
