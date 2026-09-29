@@ -48,6 +48,7 @@ class CTFTester(QWidget):
         # Checkbox para el modo Standalone (Sin PLC)
         self.chk_standalone = QCheckBox("Modo Standalone (Ignorar conexión al PLC físico)")
         self.chk_standalone.setStyleSheet("color: #e67e22; font-weight: bold;")
+        self.chk_standalone.setChecked(True)
         self.chk_standalone.stateChanged.connect(self.toggle_standalone)
         vbox_control.addWidget(self.chk_standalone)
 
@@ -84,14 +85,11 @@ class CTFTester(QWidget):
         layout.addWidget(grp_control)
         
         # --- SECCIÓN 3: SLIDERS DE SIMULACIÓN ---
-        grp_niveles = QGroupBox("Forzar Niveles (Solo si Hardware_Real = False)")
+        grp_niveles = QGroupBox("Forzar Niveles (Funciona con o sin Hardware Real)")
         vbox_niveles = QVBoxLayout()
         
-        self.chk_override = QCheckBox("Desactivar auto-llenado y usar sliders manuales")
+        self.chk_override = QCheckBox("Ignorar I2C/Auto-llenado y forzar nivel manual con los sliders")
         self.chk_override.stateChanged.connect(self.toggle_override)
-        if HARDWARE_REAL:
-            self.chk_override.setEnabled(False)
-            self.chk_override.setText("Hardware Real Detectado (Modo manual desactivado)")
         vbox_niveles.addWidget(self.chk_override)
         
         self.sliders = []

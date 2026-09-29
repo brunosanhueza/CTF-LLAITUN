@@ -118,6 +118,9 @@ class HardwareManager:
                 pass
 
     def leer_niveles_pct(self):
+        if getattr(self, 'override_niveles', None) is not None:
+            return self.override_niveles
+            
         if HARDWARE_REAL:
             niveles = []
             for sensor in self.sensores:
@@ -261,6 +264,7 @@ class RtuHardwareGateway:
                     logger.warning("Sin conexión al PLC Físico. Fallback de seguridad activado.")
                     self.hw.set_bombas(False)
                     self.hw.set_semaforos("rojo")
+                    self.hw.set_color_tiras(255, 0, 0)
 
             except Exception as e:
                 logger.error(f"Error en bucle CTF: {e}")
