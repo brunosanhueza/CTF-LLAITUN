@@ -1,8 +1,6 @@
 import sys
-import threading
-import time
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QPushButton, QSlider, QLabel, QGroupBox, QCheckBox)
+                             QPushButton, QSlider, QLabel, QGroupBox, QCheckBox, QComboBox)
 from PyQt5.QtCore import Qt, QTimer
 
 from rtu_daemon import RtuHardwareGateway, HARDWARE_REAL
@@ -12,7 +10,6 @@ class CTFTester(QWidget):
         super().__init__()
         
         self.gateway = RtuHardwareGateway()
-        # Por defecto permitimos arrancar sin PLC si activan la casilla luego
         self.gateway.iniciar()
         
         self.initUI()
@@ -23,7 +20,7 @@ class CTFTester(QWidget):
 
     def initUI(self):
         self.setWindowTitle("CTF Aguas del Valle - Panel de Testeo Visual")
-        self.resize(550, 500)
+        self.resize(600, 700)
         self.setStyleSheet("font-size: 11pt;")
         
         layout = QVBoxLayout()
@@ -32,7 +29,7 @@ class CTFTester(QWidget):
         grp_estado = QGroupBox("Monitor del RTU Daemon")
         vbox_estado = QVBoxLayout()
         self.lbl_estado = QLabel("Fase CTF: Iniciando...")
-        self.lbl_bombas = QLabel("Estado Bombas: ---")
+        self.lbl_bombas = QLabel("Estado Bombas (Lógica General): ---")
         self.lbl_bypass = QLabel("Ataque Modbus: ---")
         
         vbox_estado.addWidget(self.lbl_estado)
@@ -42,34 +39,17 @@ class CTFTester(QWidget):
         layout.addWidget(grp_estado)
         
         # --- SECCIÓN 2: BOTONES DE OVERRIDE (EMERGENCIA / ATAQUE) ---
-        grp_control = QGroupBox("Botones de Acción Inmediata")
+        grp_control = QGroupBox("Botones de Acción Global")
         vbox_control = QVBoxLayout()
         
-        # Checkbox para el modo Standalone (Sin PLC)
         self.chk_standalone = QCheckBox("Modo Standalone (Ignorar conexión al PLC físico)")
         self.chk_standalone.setStyleSheet("color: #e67e22; font-weight: bold;")
         self.chk_standalone.setChecked(True)
         self.chk_standalone.stateChanged.connect(self.toggle_standalone)
         vbox_control.addWidget(self.chk_standalone)
 
-        from PyQt5.QtWidgets import QComboBox
-        hbox_color = QHBoxLayout()
-        lbl_color = QLabel("Color Tiras LED (Nominal):")
-        self.combo_color = QComboBox()
-        # Añadir opciones (Texto, RGB)
-        self.combo_color.addItem("Azul", (0, 0, 255))
-        self.combo_color.addItem("Cian", (0, 200, 255))
-        self.combo_color.addItem("Blanco", (255, 255, 255))
-        self.combo_color.addItem("Verde", (0, 255, 0))
-        self.combo_color.addItem("Magenta", (255, 0, 200))
-        self.combo_color.currentIndexChanged.connect(self.change_led_color)
-        hbox_color.addWidget(lbl_color)
-        hbox_color.addWidget(self.combo_color)
-        hbox_color.addStretch()
-        vbox_control.addLayout(hbox_color)
-
         hbox_botones = QHBoxLayout()
-        self.btn_parada = QPushButton("PARADA DE EMERGENCIA (Apagar Bombas)")
+        self.btn_parada = QPushButton("PARADA DE EMERGENCIA (Apagar Todo)")
         self.btn_parada.setStyleSheet("background-color: #B3261E; color: white; font-weight: bold; padding: 10px;")
         self.btn_parada.setCheckable(True)
         self.btn_parada.clicked.connect(self.toggle_parada)
@@ -90,7 +70,53 @@ class CTFTester(QWidget):
         grp_control.setLayout(vbox_control)
         layout.addWidget(grp_control)
         
-        # --- SECCIÓN 3: SLIDERS DE SIMULACIÓN ---
+        # --- SECCIÓN 3: CONTROL MANUAL DE BOMBAS ---
+        grp_bombas = QGroupBox("Control Manual de Relés (Bombas)")
+        vbox_bombas = QVBoxLayout()
+        
+        self.chk_manual_bombas = QCheckBox("Habilitar control individual (Anula el CTF automático)")
+        self.chk_manual_bombas.setStyleSheet("font-weight: bold;")
+        self.chk_manual_bombas.stateChanged.connect(self.toggle_manual_bombas)
+        vbox_bombas.addWidget(self.chk_manual_bombas)
+        
+        hbox_pumps = QHBoxLayout()
+        self.btn_bombas = []
+        for i in range(4):
+            btn = QPushButton(f"Bomba {i+1} [OFF]")
+            btn.setCheckable(True)
+            btn.setEnabled(False)
+            btn.clicked.connect(lambda checked, idx=i: self.toggle_bomba(idx, checked))
+            hbox_pumps.addWidget(btn)
+            self.btn_bombas.append(btn)
+        
+        vbox_bombas.addLayout(hbox_pumps)
+        grp_bombas.setLayout(vbox_bombas)
+        layout.addWidget(grp_bombas)
+        
+        # --- SECCIÓN 4: CONTROL DE COLORES (TIRAS LED) ---
+        grp_colores = QGroupBox("Personalización Tiras LED (SK6812 / WS2812B)")
+        hbox_colores = QHBoxLayout()
+        
+        lbl_t1 = QLabel("Tira 1 (Agua/CTF):")
+        self.combo_t1 = QComboBox()
+        self._fill_color_combo(self.combo_t1)
+        self.combo_t1.setCurrentIndex(0) # Azul
+        self.combo_t1.currentIndexChanged.connect(self.change_led_color)
+        
+        lbl_t2 = QLabel("Tira 2 (Edificios):")
+        self.combo_t2 = QComboBox()
+        self._fill_color_combo(self.combo_t2)
+        self.combo_t2.setCurrentIndex(2) # Blanco
+        self.combo_t2.currentIndexChanged.connect(self.change_led_color)
+        
+        hbox_colores.addWidget(lbl_t1)
+        hbox_colores.addWidget(self.combo_t1)
+        hbox_colores.addWidget(lbl_t2)
+        hbox_colores.addWidget(self.combo_t2)
+        grp_colores.setLayout(hbox_colores)
+        layout.addWidget(grp_colores)
+        
+        # --- SECCIÓN 5: SLIDERS DE SIMULACIÓN ---
         grp_niveles = QGroupBox("Forzar Niveles (Funciona con o sin Hardware Real)")
         vbox_niveles = QVBoxLayout()
         
@@ -121,13 +147,19 @@ class CTFTester(QWidget):
         layout.addWidget(grp_niveles)
         
         self.setLayout(layout)
+        self.change_led_color() # Aplicar colores iniciales
+
+    def _fill_color_combo(self, combo):
+        combo.addItem("Azul", (0, 0, 255))
+        combo.addItem("Cian", (0, 200, 255))
+        combo.addItem("Blanco", (255, 255, 255))
+        combo.addItem("Verde", (0, 255, 0))
+        combo.addItem("Amarillo", (255, 140, 0))
+        combo.addItem("Rojo", (255, 0, 0))
+        combo.addItem("Magenta", (255, 0, 200))
 
     def toggle_standalone(self, state):
         self.gateway.ignorar_plc = (state == Qt.Checked)
-
-    def change_led_color(self, index):
-        color_rgb = self.combo_color.itemData(index)
-        self.gateway.color_tiras_override = color_rgb
 
     def toggle_parada(self, checked):
         self.gateway.forzar_parada = checked
@@ -135,7 +167,7 @@ class CTFTester(QWidget):
             self.btn_parada.setText("REANUDAR LÓGICA CTF")
             self.btn_parada.setStyleSheet("background-color: #2ECC71; color: white; font-weight: bold; padding: 10px;")
         else:
-            self.btn_parada.setText("PARADA DE EMERGENCIA (Apagar Bombas)")
+            self.btn_parada.setText("PARADA DE EMERGENCIA (Apagar Todo)")
             self.btn_parada.setStyleSheet("background-color: #B3261E; color: white; font-weight: bold; padding: 10px;")
 
     def toggle_luminarias(self, checked):
@@ -151,8 +183,33 @@ class CTFTester(QWidget):
         if self.gateway.cliente.is_open:
             self.gateway.cliente.write_single_register(0, 768)
         else:
-            # Si estamos sin PLC (Standalone), inyectamos la variable directo en memoria
             self.gateway.ataque_simulado = True
+
+    def toggle_manual_bombas(self, state):
+        activo = (state == Qt.Checked)
+        self.gateway.hw.modo_manual_bombas = activo
+        for btn in self.btn_bombas:
+            btn.setEnabled(activo)
+        # Sincronizar el estado actual al hardware
+        if activo:
+            for i, btn in enumerate(self.btn_bombas):
+                self.gateway.hw.set_bomba(i, btn.isChecked())
+
+    def toggle_bomba(self, idx, checked):
+        self.gateway.hw.set_bomba(idx, checked)
+        btn = self.btn_bombas[idx]
+        if checked:
+            btn.setText(f"Bomba {idx+1} [ON]")
+            btn.setStyleSheet("background-color: #2ECC71; color: white; font-weight: bold;")
+        else:
+            btn.setText(f"Bomba {idx+1} [OFF]")
+            btn.setStyleSheet("")
+
+    def change_led_color(self):
+        c1 = self.combo_t1.itemData(self.combo_t1.currentIndex())
+        c2 = self.combo_t2.itemData(self.combo_t2.currentIndex())
+        self.gateway.color_tira1_override = c1
+        self.gateway.color_tira2_override = c2
 
     def toggle_override(self, state):
         for sl in self.sliders:
@@ -173,8 +230,8 @@ class CTFTester(QWidget):
     def update_status(self):
         self.lbl_estado.setText(f"Fase CTF: <b style='color: #2980b9'>{self.gateway.estado}</b>")
         
-        texto_bombas = "<span style='color: green'>ENCENDIDAS (Relés LOW)</span>" if self.gateway.bombas_activas else "<span style='color: red'>APAGADAS (Relés HIGH)</span>"
-        self.lbl_bombas.setText(f"Estado Bombas: <b>{texto_bombas}</b>")
+        texto_bombas = "<span style='color: green'>ENCENDIDAS</span>" if self.gateway.bombas_activas else "<span style='color: red'>APAGADAS</span>"
+        self.lbl_bombas.setText(f"Lógica General del CTF para Bombas: <b>{texto_bombas}</b>")
         
         if self.gateway.cliente.is_open:
             regs = self.gateway.cliente.read_holding_registers(0, 1)
@@ -182,7 +239,6 @@ class CTFTester(QWidget):
             texto_bypass = "<span style='color: red'>ACTIVO (Por Red Modbus)</span>" if bypass else "<span style='color: green'>Seguro (Reg 0 != 768)</span>"
             self.lbl_bypass.setText(f"Ataque Modbus: <b>{texto_bypass}</b>")
         else:
-            # Modo Standalone o desconectado
             if getattr(self.gateway, 'ignorar_plc', False):
                 bypass = getattr(self.gateway, 'ataque_simulado', False)
                 texto_bypass = "<span style='color: red'>ACTIVO (Ataque Local Simulado)</span>" if bypass else "<span style='color: green'>Seguro (Simulado)</span>"
@@ -205,6 +261,3 @@ if __name__ == "__main__":
     tester = CTFTester()
     tester.show()
     sys.exit(app.exec_())
-
-
-#ups

@@ -50,6 +50,9 @@ class HardwareManager:
         self.canales_ws = []
         self.n_leds_tira = 100
         
+        self.modo_manual_bombas = False
+        self.estado_bombas = [False, False, False, False]
+        
         # --- INIT TIRAS LED (Bajo nivel para soportar PWM0 y PWM1 a la vez) ---
         if HAY_TIRAS:
             try:
@@ -57,7 +60,7 @@ class HardwareManager:
                 ws.ws2811_t_freq_set(self.leds, 800000)
                 ws.ws2811_t_dmanum_set(self.leds, 10)
                 
-                # Tira 1: GPIO 18, PWM 0
+                # Tira 1 (Agua): GPIO 18, PWM 0
                 ch0 = ws.ws2811_channel_get(self.leds, 0)
                 ws.ws2811_channel_t_count_set(ch0, self.n_leds_tira)
                 ws.ws2811_channel_t_gpionum_set(ch0, 18)
@@ -66,7 +69,7 @@ class HardwareManager:
                 ws.ws2811_channel_t_strip_type_set(ch0, ws.WS2811_STRIP_GRB)
                 self.canales_ws.append(ch0)
                 
-                # Tira 2: GPIO 13, PWM 1
+                # Tira 2 (Casas): GPIO 13, PWM 1
                 ch1 = ws.ws2811_channel_get(self.leds, 1)
                 ws.ws2811_channel_t_count_set(ch1, self.n_leds_tira)
                 ws.ws2811_channel_t_gpionum_set(ch1, 13)
@@ -121,11 +124,16 @@ class HardwareManager:
         else:
             self.niveles_simulados = [25.0, 25.0, 25.0, 25.0]
 
-    def set_bombas(self, activas: bool):
+    def set_bomba(self, indice: int, activa: bool):
+        self.estado_bombas[indice] = activa
         if HARDWARE_REAL:
-            nivel = GPIO.LOW if activas else GPIO.HIGH
-            for pin in RELES_BOMBAS:
-                GPIO.output(pin, nivel)
+            nivel = GPIO.LOW if activa else GPIO.HIGH
+            GPIO.output(RELES_BOMBAS[indice], nivel)
+
+    def set_bombas(self, activas: bool):
+        if not self.modo_manual_bombas:
+            for i in range(4):
+                self.set_bomba(i, activas)
 
     def set_luminarias(self, activas: bool):
         if HARDWARE_REAL:
@@ -140,13 +148,19 @@ class HardwareManager:
                     nivel = GPIO.LOW if c == color else GPIO.HIGH
                     GPIO.output(pin, nivel)
 
-    def set_color_tiras(self, r, g, b):
+    def set_color_tiras(self, color_t1, color_t2):
         if HAY_TIRAS and self.leds:
             try:
-                valor_color = (int(r) << 16) | (int(g) << 8) | int(b)
-                for ch in self.canales_ws:
+                c1 = (int(color_t1[0]) << 16) | (int(color_t1[1]) << 8) | int(color_t1[2])
+                c2 = (int(color_t2[0]) << 16) | (int(color_t2[1]) << 8) | int(color_t2[2])
+                
+                if len(self.canales_ws) > 0:
                     for i in range(self.n_leds_tira):
-                        ws.ws2811_led_set(ch, i, valor_color)
+                        ws.ws2811_led_set(self.canales_ws[0], i, c1)
+                if len(self.canales_ws) > 1:
+                    for i in range(self.n_leds_tira):
+                        ws.ws2811_led_set(self.canales_ws[1], i, c2)
+                        
                 ws.ws2811_render(self.leds)
             except Exception as e:
                 pass
@@ -161,11 +175,14 @@ class HardwareManager:
                 if sensor:
                     try:
                         dist = sensor.range
-                        # NUEVA MATEMÁTICA INVERTIDA
-                        if DIST_VACIO_MM == DIST_LLENO_MM:
-                            pct = 0.0
+                        # Manejo de fallos/anomalías del VL53L0X
+                        if dist > 8000:
+                            pct = 0.0 # Fuera de rango = sin agua
                         else:
-                            pct = (DIST_VACIO_MM - dist) / (DIST_VACIO_MM - DIST_LLENO_MM) * 100.0
+                            if DIST_VACIO_MM == DIST_LLENO_MM:
+                                pct = 0.0
+                            else:
+                                pct = (DIST_VACIO_MM - dist) / (DIST_VACIO_MM - DIST_LLENO_MM) * 100.0
                         niveles.append(max(0.0, min(100.0, pct)))
                     except Exception:
                         niveles.append(0.0)
@@ -188,11 +205,11 @@ class HardwareManager:
         if HARDWARE_REAL:
             self.set_bombas(False)
             self.set_luminarias(False)
-            self.set_semaforos("rojo")  # Seguro
+            self.set_semaforos("rojo")
             GPIO.cleanup()
         if HAY_TIRAS and self.leds:
             try:
-                self.set_color_tiras(0, 0, 0)
+                self.set_color_tiras((0,0,0), (0,0,0))
                 ws.ws2811_fini(self.leds)
                 ws.delete_ws2811_t(self.leds)
             except Exception:
@@ -219,6 +236,7 @@ class RtuHardwareGateway:
             threading.Thread(target=self._bucle_control, daemon=True).start()
 
     def _actualizar_luces_estado(self, nivel_maximo):
+        # 1. Semáforos CTF
         if self.estado in ["NORMAL", "LLENANDO"]:
             self.hw.set_semaforos("verde")
         elif self.estado == "LIMITE_ALCANZADO":
@@ -226,13 +244,17 @@ class RtuHardwareGateway:
         elif self.estado in ["OVERRIDE_ACTIVO", "INUNDACION_CRITICA", "PARADA_FORZADA"]:
             self.hw.set_semaforos("rojo")
             
-        color_led = getattr(self, 'color_tiras_override', (0, 0, 255)) 
+        # 2. Tira 1 (Lógica de Agua/CTF)
+        color_t1 = getattr(self, 'color_tira1_override', (0, 0, 255)) 
         if nivel_maximo >= 100.0 or self.estado in ["INUNDACION_CRITICA", "PARADA_FORZADA"]:
-            color_led = (255, 0, 0)
+            color_t1 = (255, 0, 0) # Rojo incondicional
         elif nivel_maximo >= self.limite_seguridad_pct or self.estado == "LIMITE_ALCANZADO":
-            color_led = (255, 140, 0)
+            color_t1 = (255, 140, 0) # Ámbar
             
-        self.hw.set_color_tiras(*color_led)
+        # 3. Tira 2 (Edificios/Casas, completamente libre)
+        color_t2 = getattr(self, 'color_tira2_override', (255, 255, 255)) # Blanco por defecto
+            
+        self.hw.set_color_tiras(color_t1, color_t2)
 
     def _bucle_control(self):
         while self.corriendo:
@@ -307,7 +329,7 @@ class RtuHardwareGateway:
                     logger.warning("Sin conexión al PLC Físico. Fallback de seguridad activado.")
                     self.hw.set_bombas(False)
                     self.hw.set_semaforos("rojo")
-                    self.hw.set_color_tiras(255, 0, 0)
+                    self.hw.set_color_tiras((255, 0, 0), (255, 0, 0))
 
             except Exception as e:
                 logger.error(f"Error en bucle CTF: {e}")
