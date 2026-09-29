@@ -9,19 +9,21 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# MAPA DE HARDWARE (Basado en el nuevo Cuadrante 3)
+# MAPA DE HARDWARE (Basado en el nuevo Cuadrante 3 - v1.0.0 final)
 # ============================================================================
 
-RELES_BOMBAS = [4, 6, 27, 26] # P1, P2, P3, P4
-SEMAFORO_1 = {"rojo": 22, "amarillo": 23, "verde": 24}
-SEMAFORO_2 = {"rojo": 16, "amarillo": 20, "verde": 21}
+RELES_BOMBAS = [4, 6, 27, 26] # P1, P2, P3, P4 (Activos en BAJO)
+LUMINARIAS = [9, 11] # L1, L2 (LEDs en SPI0, Activos en ALTO)
+SEMAFORO_1 = {"rojo": 22, "amarillo": 23, "verde": 24} # Activos en BAJO
+SEMAFORO_2 = {"rojo": 16, "amarillo": 20, "verde": 21} # Activos en BAJO
 
 MUX_ADDRESS = 0x70
 MUX_RST_PIN = 17
 CANALES_SENSORES = [0, 1, 2, 3]
 
-DIST_VACIO_MM = 300
-DIST_LLENO_MM = 50
+# NUEVA CALIBRACIÓN (0 vacío, 40 lleno)
+DIST_VACIO_MM = 0
+DIST_LLENO_MM = 40
 
 try:
     import RPi.GPIO as GPIO
@@ -35,7 +37,7 @@ except ImportError:
     logger.warning("Librerías de Raspberry no detectadas. Corriendo en SIMULACIÓN.")
 
 try:
-    from rpi_ws281x import PixelStrip, Color
+    from rpi_ws281x import ws
     HAY_TIRAS = True
 except ImportError:
     HAY_TIRAS = False
@@ -44,29 +46,55 @@ except ImportError:
 class HardwareManager:
     def __init__(self):
         self.sensores = []
-        self.tiras = []
+        self.leds = None
+        self.canales_ws = []
+        self.n_leds_tira = 100
         
-        # --- INIT TIRAS LED ---
+        # --- INIT TIRAS LED (Bajo nivel para soportar PWM0 y PWM1 a la vez) ---
         if HAY_TIRAS:
             try:
-                # Tira 1: GPIO 18, PWM 0, 30 LEDs
-                t1 = PixelStrip(30, 18, 800000, 10, False, 128, 0)
-                t1.begin()
-                self.tiras.append(t1)
-                # Tira 2: GPIO 13, PWM 1, 30 LEDs
-                t2 = PixelStrip(30, 13, 800000, 10, False, 128, 1)
-                t2.begin()
-                self.tiras.append(t2)
+                self.leds = ws.new_ws2811_t()
+                ws.ws2811_t_freq_set(self.leds, 800000)
+                ws.ws2811_t_dmanum_set(self.leds, 10)
+                
+                # Tira 1: GPIO 18, PWM 0
+                ch0 = ws.ws2811_channel_get(self.leds, 0)
+                ws.ws2811_channel_t_count_set(ch0, self.n_leds_tira)
+                ws.ws2811_channel_t_gpionum_set(ch0, 18)
+                ws.ws2811_channel_t_invert_set(ch0, 0)
+                ws.ws2811_channel_t_brightness_set(ch0, 128)
+                ws.ws2811_channel_t_strip_type_set(ch0, ws.WS2811_STRIP_GRB)
+                self.canales_ws.append(ch0)
+                
+                # Tira 2: GPIO 13, PWM 1
+                ch1 = ws.ws2811_channel_get(self.leds, 1)
+                ws.ws2811_channel_t_count_set(ch1, self.n_leds_tira)
+                ws.ws2811_channel_t_gpionum_set(ch1, 13)
+                ws.ws2811_channel_t_invert_set(ch1, 0)
+                ws.ws2811_channel_t_brightness_set(ch1, 128)
+                ws.ws2811_channel_t_strip_type_set(ch1, ws.WS2811_STRIP_GRB)
+                self.canales_ws.append(ch1)
+                
+                resp = ws.ws2811_init(self.leds)
+                if resp != ws.WS2811_SUCCESS:
+                    logger.error(f"Fallo inicializando WS2811 (Error {resp}). Tiras inactivas.")
+                    self.leds = None
             except Exception as e:
-                logger.error(f"Error iniciando tiras LED (Requiere sudo): {e}")
+                logger.error(f"Error iniciando tiras LED de bajo nivel: {e}")
 
         if HARDWARE_REAL:
             GPIO.setmode(GPIO.BCM)
             GPIO.setwarnings(False)
             
+            # Relés Bombas (Apagados -> HIGH, activos en bajo)
             for pin in RELES_BOMBAS:
                 GPIO.setup(pin, GPIO.OUT, initial=GPIO.HIGH)
                 
+            # Luminarias (Apagadas -> LOW, activas en alto)
+            for pin in LUMINARIAS:
+                GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
+                
+            # Semáforos (Apagados -> HIGH)
             for sem in [SEMAFORO_1, SEMAFORO_2]:
                 for pin in sem.values():
                     GPIO.setup(pin, GPIO.OUT, initial=GPIO.HIGH)
@@ -99,6 +127,12 @@ class HardwareManager:
             for pin in RELES_BOMBAS:
                 GPIO.output(pin, nivel)
 
+    def set_luminarias(self, activas: bool):
+        if HARDWARE_REAL:
+            nivel = GPIO.HIGH if activas else GPIO.LOW
+            for pin in LUMINARIAS:
+                GPIO.output(pin, nivel)
+
     def set_semaforos(self, color):
         if HARDWARE_REAL:
             for sem in [SEMAFORO_1, SEMAFORO_2]:
@@ -107,14 +141,14 @@ class HardwareManager:
                     GPIO.output(pin, nivel)
 
     def set_color_tiras(self, r, g, b):
-        if HAY_TIRAS:
+        if HAY_TIRAS and self.leds:
             try:
-                c = Color(r, g, b)
-                for tira in self.tiras:
-                    for i in range(tira.numPixels()):
-                        tira.setPixelColor(i, c)
-                    tira.show()
-            except Exception:
+                valor_color = (int(r) << 16) | (int(g) << 8) | int(b)
+                for ch in self.canales_ws:
+                    for i in range(self.n_leds_tira):
+                        ws.ws2811_led_set(ch, i, valor_color)
+                ws.ws2811_render(self.leds)
+            except Exception as e:
                 pass
 
     def leer_niveles_pct(self):
@@ -127,7 +161,11 @@ class HardwareManager:
                 if sensor:
                     try:
                         dist = sensor.range
-                        pct = (DIST_VACIO_MM - dist) / (DIST_VACIO_MM - DIST_LLENO_MM) * 100.0
+                        # NUEVA MATEMÁTICA INVERTIDA
+                        if DIST_VACIO_MM == DIST_LLENO_MM:
+                            pct = 0.0
+                        else:
+                            pct = (DIST_VACIO_MM - dist) / (DIST_VACIO_MM - DIST_LLENO_MM) * 100.0
                         niveles.append(max(0.0, min(100.0, pct)))
                     except Exception:
                         niveles.append(0.0)
@@ -148,7 +186,17 @@ class HardwareManager:
 
     def limpiar(self):
         if HARDWARE_REAL:
+            self.set_bombas(False)
+            self.set_luminarias(False)
+            self.set_semaforos("rojo")  # Seguro
             GPIO.cleanup()
+        if HAY_TIRAS and self.leds:
+            try:
+                self.set_color_tiras(0, 0, 0)
+                ws.ws2811_fini(self.leds)
+                ws.delete_ws2811_t(self.leds)
+            except Exception:
+                pass
 
 
 class RtuHardwareGateway:
@@ -171,7 +219,6 @@ class RtuHardwareGateway:
             threading.Thread(target=self._bucle_control, daemon=True).start()
 
     def _actualizar_luces_estado(self, nivel_maximo):
-        # 1. Actualizar Semáforos
         if self.estado in ["NORMAL", "LLENANDO"]:
             self.hw.set_semaforos("verde")
         elif self.estado == "LIMITE_ALCANZADO":
@@ -179,14 +226,11 @@ class RtuHardwareGateway:
         elif self.estado in ["OVERRIDE_ACTIVO", "INUNDACION_CRITICA", "PARADA_FORZADA"]:
             self.hw.set_semaforos("rojo")
             
-        # 2. Actualizar Tiras LED
-        color_led = getattr(self, 'color_tiras_override', (0, 0, 255)) # Azul por defecto
-        
-        # Override de color por estados críticos
+        color_led = getattr(self, 'color_tiras_override', (0, 0, 255)) 
         if nivel_maximo >= 100.0 or self.estado in ["INUNDACION_CRITICA", "PARADA_FORZADA"]:
-            color_led = (255, 0, 0) # Rojo
+            color_led = (255, 0, 0)
         elif nivel_maximo >= self.limite_seguridad_pct or self.estado == "LIMITE_ALCANZADO":
-            color_led = (255, 140, 0) # Amarillo / Ambar
+            color_led = (255, 140, 0)
             
         self.hw.set_color_tiras(*color_led)
 
@@ -197,7 +241,6 @@ class RtuHardwareGateway:
                 niveles_pct = self.hw.leer_niveles_pct()
                 nivel_maximo = max(niveles_pct) if niveles_pct else 0.0
 
-                # FLAG inyectado para pruebas sin PLC físico
                 ignorar_plc = getattr(self, 'ignorar_plc', False)
 
                 if self.cliente.is_open or ignorar_plc:

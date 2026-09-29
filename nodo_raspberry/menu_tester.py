@@ -75,6 +75,12 @@ class CTFTester(QWidget):
         self.btn_parada.clicked.connect(self.toggle_parada)
         hbox_botones.addWidget(self.btn_parada)
         
+        self.btn_luminarias = QPushButton("Luminarias: APAGADAS")
+        self.btn_luminarias.setCheckable(True)
+        self.btn_luminarias.setStyleSheet("background-color: #34495e; color: white; padding: 10px;")
+        self.btn_luminarias.clicked.connect(self.toggle_luminarias)
+        hbox_botones.addWidget(self.btn_luminarias)
+        
         self.btn_ataque = QPushButton("Testear Ataque Modbus\n(Forzar Reg 0 a 768)")
         self.btn_ataque.setStyleSheet("background-color: #F39C12; color: white; font-weight: bold;")
         self.btn_ataque.clicked.connect(self.simular_ataque)
@@ -131,6 +137,15 @@ class CTFTester(QWidget):
         else:
             self.btn_parada.setText("PARADA DE EMERGENCIA (Apagar Bombas)")
             self.btn_parada.setStyleSheet("background-color: #B3261E; color: white; font-weight: bold; padding: 10px;")
+
+    def toggle_luminarias(self, checked):
+        self.gateway.hw.set_luminarias(checked)
+        if checked:
+            self.btn_luminarias.setText("Luminarias: ENCENDIDAS")
+            self.btn_luminarias.setStyleSheet("background-color: #f1c40f; color: black; font-weight: bold; padding: 10px;")
+        else:
+            self.btn_luminarias.setText("Luminarias: APAGADAS")
+            self.btn_luminarias.setStyleSheet("background-color: #34495e; color: white; padding: 10px;")
 
     def simular_ataque(self):
         if self.gateway.cliente.is_open:
@@ -190,3 +205,6 @@ if __name__ == "__main__":
     tester = CTFTester()
     tester.show()
     sys.exit(app.exec_())
+
+
+#ups
