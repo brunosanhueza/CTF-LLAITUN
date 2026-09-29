@@ -11,7 +11,13 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # MAPA DE HARDWARE
 # ============================================================================
-RELES_BOMBAS = [4, 6, 27, 26] 
+# Cada bomba usa DOS relés a la vez (polo +12V y retorno GND) para cerrar el circuito.
+RELES_BOMBAS = {
+    0: [4, 5],     # P1 (Canales 1 y 2)
+    1: [6, 7],     # P2 (Canales 3 y 4)
+    2: [27, 19],   # P3 (Canales 5 y 6)
+    3: [26, 12]    # P4 (Canales 7 y 8)
+}
 LUMINARIAS = [9, 11]
 SEMAFORO_1 = {"rojo": 22, "amarillo": 23, "verde": 24}
 SEMAFORO_2 = {"rojo": 16, "amarillo": 20, "verde": 21}
@@ -81,8 +87,9 @@ class HardwareManager:
             GPIO.setmode(GPIO.BCM)
             GPIO.setwarnings(False)
             
-            for pin in RELES_BOMBAS:
-                GPIO.setup(pin, GPIO.OUT, initial=GPIO.HIGH)
+            for par_pines in RELES_BOMBAS.values():
+                for pin in par_pines:
+                    GPIO.setup(pin, GPIO.OUT, initial=GPIO.HIGH)
             for pin in LUMINARIAS:
                 GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
             for sem in [SEMAFORO_1, SEMAFORO_2]:
@@ -114,7 +121,8 @@ class HardwareManager:
         self.estado_bombas[indice] = activa
         if HARDWARE_REAL:
             nivel = GPIO.LOW if activa else GPIO.HIGH
-            GPIO.output(RELES_BOMBAS[indice], nivel)
+            for pin in RELES_BOMBAS[indice]:
+                GPIO.output(pin, nivel)
 
     def set_bombas(self, activas: bool):
         if not self.modo_manual_bombas:
@@ -127,12 +135,18 @@ class HardwareManager:
             for pin in LUMINARIAS:
                 GPIO.output(pin, nivel)
 
-    def set_semaforos(self, color):
+    def set_semaforo(self, id_sem: int, color: str):
+        if HARDWARE_REAL:
+            sem = SEMAFORO_1 if id_sem == 1 else SEMAFORO_2
+            for c, pin in sem.items():
+                nivel = GPIO.LOW if c == color else GPIO.HIGH
+                GPIO.output(pin, nivel)
+
+    def apagar_semaforos(self):
         if HARDWARE_REAL:
             for sem in [SEMAFORO_1, SEMAFORO_2]:
-                for c, pin in sem.items():
-                    nivel = GPIO.LOW if c == color else GPIO.HIGH
-                    GPIO.output(pin, nivel)
+                for pin in sem.values():
+                    GPIO.output(pin, GPIO.HIGH)
 
     def pintar_pixeles(self, encendidos: int, color_t1, color_t2):
         if HAY_TIRAS and self.leds:
@@ -229,6 +243,35 @@ class AnimadorTiras(threading.Thread):
             time.sleep(0.2)
 
 
+class AnimadorSemaforos(threading.Thread):
+    def __init__(self, hw):
+        super().__init__(daemon=True)
+        self.hw = hw
+        self.corriendo = True
+        self.secuencia = [("verde", 6.0), ("amarillo", 2.0), ("rojo", 8.0)]
+        self.periodo = sum(d for c, d in self.secuencia)
+        self.desfases = {1: 0.0, 2: 8.0} # 1=TL1, 2=TL2
+        
+    def _color_en(self, t):
+        pos = t % self.periodo
+        acumulado = 0.0
+        for color, duracion in self.secuencia:
+            acumulado += duracion
+            if pos < acumulado:
+                return color
+        return "rojo"
+
+    def run(self):
+        t0 = time.monotonic()
+        while self.corriendo:
+            t = time.monotonic() - t0
+            c1 = self._color_en(t + self.desfases[1])
+            c2 = self._color_en(t + self.desfases[2])
+            self.hw.set_semaforo(1, c1)
+            self.hw.set_semaforo(2, c2)
+            time.sleep(0.1)
+
+
 class RtuHardwareGateway:
     def __init__(self):
         self.plc_ip = os.environ.get("PLC_HOST", "192.168.60.10")
@@ -237,6 +280,7 @@ class RtuHardwareGateway:
         self.cliente = ModbusClient(host=self.plc_ip, port=self.plc_port, auto_open=True, timeout=2.0)
         self.hw = HardwareManager()
         self.animador_tiras = AnimadorTiras(self.hw)
+        self.animador_semaforos = AnimadorSemaforos(self.hw)
         
         self.limite_seguridad_pct = 85.0
         self.bombas_activas = True
@@ -247,22 +291,18 @@ class RtuHardwareGateway:
         if not self.corriendo:
             self.corriendo = True
             self.animador_tiras.start()
+            self.animador_semaforos.start()
             threading.Thread(target=self._bucle_control, daemon=True).start()
 
     def _actualizar_luces_estado(self, nivel_maximo):
-        if self.estado in ["NORMAL", "LLENANDO"]:
-            self.hw.set_semaforos("verde")
-        elif self.estado == "LIMITE_ALCANZADO":
-            self.hw.set_semaforos("amarillo")
-        elif self.estado in ["OVERRIDE_ACTIVO", "INUNDACION_CRITICA", "PARADA_FORZADA"]:
-            self.hw.set_semaforos("rojo")
-            
+        # 1. Tira 1 (Lógica de Agua/CTF)
         color_t1 = getattr(self, 'color_tira1_override', (0, 0, 255)) 
         if nivel_maximo >= 100.0 or self.estado in ["INUNDACION_CRITICA", "PARADA_FORZADA"]:
             color_t1 = (255, 0, 0)
         elif nivel_maximo >= self.limite_seguridad_pct or self.estado == "LIMITE_ALCANZADO":
             color_t1 = (255, 140, 0)
             
+        # 2. Tira 2 (Edificios/Casas, completamente libre)
         color_t2 = getattr(self, 'color_tira2_override', (255, 255, 255))
         
         self.animador_tiras.color_t1 = color_t1
@@ -339,7 +379,6 @@ class RtuHardwareGateway:
 
                 else:
                     self.hw.set_bombas(False)
-                    self.hw.set_semaforos("rojo")
                     # En fallback, forzamos animación a rojo
                     self.animador_tiras.color_t1 = (255, 0, 0)
                     self.animador_tiras.color_t2 = (255, 0, 0)
@@ -351,11 +390,17 @@ class RtuHardwareGateway:
 
     def detener(self):
         self.corriendo = False
+        
         self.animador_tiras.corriendo = False
+        self.animador_semaforos.corriendo = False
+        
         self.animador_tiras.join(timeout=1.0)
+        self.animador_semaforos.join(timeout=1.0)
+        
         if self.cliente.is_open:
             self.cliente.close()
         self.hw.limpiar()
+        self.hw.apagar_semaforos()
 
 if __name__ == "__main__":
     gateway = RtuHardwareGateway()
