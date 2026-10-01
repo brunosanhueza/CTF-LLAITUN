@@ -12,7 +12,8 @@ from database.db import (
     obtener_usuario_por_id,
     obtener_bitacoras,
     guardar_bitacora,
-    promover_a_admin
+    promover_a_admin,
+    buscar_operador
 )
 from web_scada_client import WebScadaClient
 
@@ -155,8 +156,37 @@ def download_file():
 @app.route("/admin")
 @admin_required
 def admin_panel():
-    return render_template("admin.html", usuario=session)
+    # El "Trofeo de Vuelta": Solo el admin real (o alguien que forzó su hash) verá la Flag.
+    # Esta parte de Python es la que quedará cifrada/ofuscada después con PyArmor o Cython.
+    part1 = "CtF_L1@I7uN"
+    part2 = "{paS5!!_1lAItuN_@GuA}"
+    flag_secreta = part1 + part2
+    
+    return render_template("admin.html", usuario=session, secret_admin_flag=flag_secreta)
 
+@app.route("/buscar")
+def buscar_empleado():
+    """Endpoint público para buscar información básica de operadores. Vulnerable a SQLi."""
+    q = request.args.get('query', '')
+    resultados = buscar_operador(q) if q else []
+    return jsonify(resultados)
+
+@app.route("/portal/chat")
+@login_required
+def chat_interno():
+    """
+    Ruta oculta (sin botones en la UI). Se encuentra haciendo Fuzzing con diccionarios comunes.
+    Revela la pista crítica para iniciar la Fase 2.
+    """
+    chats = [
+        {"de": "admin_scada", "para": "op_turno1", "fecha": "2026-09-29 14:02", 
+         "mensaje": "Oye, el nuevo sistema de diagnóstico plc_diagnostic ya está instalado en el servidor Debian interno (/usr/local/bin/)."},
+        {"de": "op_turno1", "para": "admin_scada", "fecha": "2026-09-29 14:05", 
+         "mensaje": "Recibido jefe. ¿Cómo me conecto si la VPN de mantenimiento sigue fallando?"},
+        {"de": "admin_scada", "para": "op_turno1", "fecha": "2026-09-29 14:10", 
+         "mensaje": "Te dejé la llave privada SSH (id_rsa) guardada temporalmente en este servidor web, en la carpeta uploads oculta. Usa el botón de descargas del portal si la necesitas urgente. El usuario del servidor Debian es operador_it."}
+    ]
+    return jsonify({"status": "Confidencial - Log de Comunicaciones", "data": chats})
 
 @app.route("/dashboard")
 def dashboard():

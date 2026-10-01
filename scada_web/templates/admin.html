@@ -45,6 +45,12 @@
                         <span class="state-pill state-normal">EN LÍNEA</span>
                     </div>
 
+                    {% if secret_admin_flag %}
+                    <div class="raw-log-msg" style="margin-top: 15px; border-left: 4px solid #2ecc71; color: #2ecc71; font-weight: bold; background: rgba(46, 204, 113, 0.1);">
+                        [ACCESO CONFIDENCIAL DESBLOQUEADO] FLAG: {{ secret_admin_flag }}
+                    </div>
+                    {% endif %}
+
                     <div class="raw-fields-grid">
                         <div class="raw-field">
                             <label>Controlador PLC Primario:</label>

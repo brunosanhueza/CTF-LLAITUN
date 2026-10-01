@@ -51,6 +51,16 @@
             </div>
         </div>
 
+        <!-- DIRECTORIO PÚBLICO (VULNERABLE A SQLI) -->
+        <div class="card login-card" style="margin-top: 15px; text-align: center; padding: 15px;">
+            <h4 style="margin-top: 0; color: #7f8c8d; font-size: 0.9em;">Directorio Público de Operadores</h4>
+            <form action="/buscar" method="GET" style="display: flex; gap: 10px; margin-top: 10px;">
+                <input type="text" name="query" placeholder="Nombre del empleado..." style="flex: 1; padding: 8px; border: 1px solid #bdc3c7; border-radius: 4px;">
+                <button type="submit" class="btn btn-primary" style="padding: 8px 15px;">Buscar</button>
+            </form>
+            <small style="display: block; margin-top: 10px; color: #95a5a6;">(El sistema devolverá resultados en formato JSON para la API interna)</small>
+        </div>
+
         <!-- NOTA DEL SISTEMA -->
         <div class="company-notice-box">
             <small>Terminal Operativo: RPi4-OT-NODE-01 | Red Interna: 192.168.60.0/24</small>

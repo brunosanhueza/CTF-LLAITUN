@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sqlite3
 import logging
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -8,8 +8,9 @@ logger = logging.getLogger(__name__)
 DB_TYPE = os.environ.get("DB_TYPE", "mysql")
 MYSQL_HOST = os.environ.get("MYSQL_HOST", "127.0.0.1")
 MYSQL_PORT = int(os.environ.get("MYSQL_PORT", 3306))
-MYSQL_USER = os.environ.get("MYSQL_USER", "root")
-MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD", "zacky5023")
+# Quitamos los valores por defecto. Si no están en el entorno de Docker, fallará.
+MYSQL_USER = os.environ.get("MYSQL_USER") 
+MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD")
 MYSQL_DB = os.environ.get("MYSQL_DB", "aguas_del_valle")
 
 SQLITE_PATH = os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "aguas_del_valle.db")
@@ -123,19 +124,27 @@ def init_db():
     count = cursor.fetchone()[0] if engine == "sqlite" else cursor.fetchone()['COUNT(*)']
 
     if count == 0:
-        pwd_operador = generate_password_hash("operador2026")
-        pwd_admin = generate_password_hash("Adm1n_Pl4nt4_S3cur3!#")
+        # El hash robusto real que nunca podrán romper
+        pwd_operador = generate_password_hash("Op3r@dor_V4ll3_2026!!!")
+        pwd_admin = generate_password_hash("Xy@9!pL2_mQz7$vW")
+        # El hash débil que van a romper con rockyou
+        pwd_fantasma = generate_password_hash("sistemas123")
 
         if engine == "sqlite":
             cursor.execute("""
                 INSERT INTO usuarios (username, password_hash, nombre, rol)
                 VALUES (?, ?, ?, ?)
-            """, ("operador", pwd_operador, "Carlos Morales (Técnico Operador)", "operador"))
+            """, ("op_turno1", pwd_operador, "Carlos Morales (Técnico Operador)", "operador"))
 
             cursor.execute("""
                 INSERT INTO usuarios (username, password_hash, nombre, rol)
                 VALUES (?, ?, ?, ?)
             """, ("admin_scada", pwd_admin, "Ing. Rodrigo Silva (Jefe de Planta)", "admin"))
+
+            cursor.execute("""
+                INSERT INTO usuarios (username, password_hash, nombre, rol)
+                VALUES (?, ?, ?, ?)
+            """, ("mantenimiento_out", pwd_fantasma, "Usuario Externo Temporal", "operador"))
 
             cursor.execute("""
                 INSERT INTO bitacoras (usuario_id, titulo, descripcion, archivo_adjunto)
@@ -145,12 +154,17 @@ def init_db():
             cursor.execute("""
                 INSERT INTO usuarios (username, password_hash, nombre, rol)
                 VALUES (%s, %s, %s, %s)
-            """, ("operador", pwd_operador, "Carlos Morales (Técnico Operador)", "operador"))
+            """, ("op_turno1", pwd_operador, "Carlos Morales (Técnico Operador)", "operador"))
 
             cursor.execute("""
                 INSERT INTO usuarios (username, password_hash, nombre, rol)
                 VALUES (%s, %s, %s, %s)
             """, ("admin_scada", pwd_admin, "Ing. Rodrigo Silva (Jefe de Planta)", "admin"))
+
+            cursor.execute("""
+                INSERT INTO usuarios (username, password_hash, nombre, rol)
+                VALUES (%s, %s, %s, %s)
+            """, ("mantenimiento_out", pwd_fantasma, "Usuario Externo Temporal", "operador"))
 
             cursor.execute("""
                 INSERT INTO bitacoras (usuario_id, titulo, descripcion, archivo_adjunto)
@@ -256,3 +270,30 @@ def promover_a_admin(user_id):
         conn.commit()
 
     conn.close()
+
+def buscar_operador(query):
+    """
+    VULNERABILIDAD INTENCIONAL: SQL Injection (Fase 1).
+    Concatena el string directamente sin parametrizar.
+    """
+    conn, engine = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Vulnerabilidad cruda:
+    query_str = f"SELECT id, username, nombre, rol FROM usuarios WHERE nombre LIKE '%{query}%'"
+    
+    try:
+        if engine == "sqlite":
+            cursor.execute(query_str)
+            rows = cursor.fetchall()
+            conn.close()
+            return [dict(r) for r in rows]
+        else:
+            cursor.execute(query_str)
+            rows = cursor.fetchall()
+            conn.close()
+            return rows
+    except Exception as e:
+        conn.close()
+        # Se expone el error crudo para que tools como SQLmap puedan hacer error-based o ver la falla
+        return [{"error": str(e)}]
