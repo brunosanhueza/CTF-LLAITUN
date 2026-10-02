@@ -128,7 +128,7 @@ def init_db():
         pwd_operador = generate_password_hash("Op3r@dor_V4ll3_2026!!!")
         pwd_admin = generate_password_hash("Xy@9!pL2_mQz7$vW")
         # El hash débil que van a romper con rockyou
-        pwd_fantasma = generate_password_hash("sistemas123")
+        pwd_fantasma = generate_password_hash("sistemas12")
 
         if engine == "sqlite":
             cursor.execute("""
@@ -144,7 +144,7 @@ def init_db():
             cursor.execute("""
                 INSERT INTO usuarios (username, password_hash, nombre, rol)
                 VALUES (?, ?, ?, ?)
-            """, ("mantenimiento_out", pwd_fantasma, "Usuario Externo Temporal", "operador"))
+            """, ("testing", pwd_fantasma, "Usuario Externo Temporal", "operador"))
 
             cursor.execute("""
                 INSERT INTO bitacoras (usuario_id, titulo, descripcion, archivo_adjunto)
@@ -164,7 +164,7 @@ def init_db():
             cursor.execute("""
                 INSERT INTO usuarios (username, password_hash, nombre, rol)
                 VALUES (%s, %s, %s, %s)
-            """, ("mantenimiento_out", pwd_fantasma, "Usuario Externo Temporal", "operador"))
+            """, ("testing", pwd_fantasma, "Usuario Externo Temporal", "operador"))
 
             cursor.execute("""
                 INSERT INTO bitacoras (usuario_id, titulo, descripcion, archivo_adjunto)

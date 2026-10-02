@@ -54,7 +54,7 @@ def admin_required(f):
             return redirect(url_for('login'))
         if session.get('rol') != 'admin':
             flash("Acceso denegado: Se requieren privilegios de Administrador SCADA.", "error")
-            return redirect(url_for('portal'))
+            return redirect(url_for('intranet'))
         return f(*args, **kwargs)
     return decorated_function
 
@@ -64,7 +64,7 @@ def index():
     if 'user_id' in session:
         if session.get('rol') == 'admin':
             return redirect(url_for('admin_panel'))
-        return redirect(url_for('portal'))
+        return redirect(url_for('intranet'))
     return redirect(url_for('login'))
 
 
@@ -85,7 +85,7 @@ def login():
             flash(f"Bienvenido/a, {user['nombre']}.", "success")
             if user['rol'] == 'admin':
                 return redirect(url_for('admin_panel'))
-            return redirect(url_for('portal'))
+            return redirect(url_for('intranet'))
         else:
             flash("Credenciales inválidas. Compruebe usuario y contraseña.", "error")
 
@@ -99,19 +99,19 @@ def logout():
     return redirect(url_for('login'))
 
 
-@app.route("/portal")
+@app.route("/intranet")
 @login_required
-def portal():
+def intranet():
     bitacoras = obtener_bitacoras()
-    return render_template("portal.html", bitacoras=bitacoras, usuario=session)
+    return render_template("intranet.html", bitacoras=bitacoras, usuario=session)
 
 
-@app.route("/portal/upload", methods=["POST"])
+@app.route("/intranet/upload", methods=["POST"])
 @login_required
 def upload_file():
     if 'archivo' not in request.files:
         flash("No se seleccionó ningún archivo.", "error")
-        return redirect(url_for('portal'))
+        return redirect(url_for('intranet'))
 
     file = request.files['archivo']
     titulo = request.form.get("titulo", "Reporte de turno").strip()
@@ -119,7 +119,7 @@ def upload_file():
 
     if file.filename == '':
         flash("El nombre de archivo no puede estar vacío.", "error")
-        return redirect(url_for('portal'))
+        return redirect(url_for('intranet'))
 
     if file:
         filename = secure_filename(file.filename)
@@ -131,17 +131,17 @@ def upload_file():
 
         flash(f"Archivo '{filename}' subido y registrado en la bitácora correctamente.", "success")
         guardar_bitacora(session['user_id'], titulo, descripcion, filename)
-        return redirect(url_for('portal'))
+        return redirect(url_for('intranet'))
 
 
-@app.route("/portal/download")
+@app.route("/intranet/download")
 @login_required
 def download_file():
     # VULNERABILIDAD INTENCIONAL: LFI (Local File Inclusion) / Path Traversal
     # No sanitizamos la variable 'file', lo que permite inyectar ../ o rutas absolutas.
     filename = request.args.get('file')
     if not filename:
-        return redirect(url_for('portal'))
+        return redirect(url_for('intranet'))
     
     # La concatenación insegura es el corazón de la vulnerabilidad
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
@@ -164,14 +164,14 @@ def admin_panel():
     
     return render_template("admin.html", usuario=session, secret_admin_flag=flag_secreta)
 
-@app.route("/buscar")
-def buscar_empleado():
+@app.route("/api/v1/search")
+def api_search():
     """Endpoint público para buscar información básica de operadores. Vulnerable a SQLi."""
     q = request.args.get('query', '')
     resultados = buscar_operador(q) if q else []
     return jsonify(resultados)
 
-@app.route("/portal/chat")
+@app.route("/internal/messages")
 @login_required
 def chat_interno():
     """
@@ -193,12 +193,12 @@ def dashboard():
     return render_template("dashboard.html")
 
 
-@app.route("/api/telemetria")
+@app.route("/api/v1/telemetry")
 def api_telemetria():
     return jsonify(scada_client.obtener_telemetria()), 200
 
 
-@app.route("/api/reset", methods=["POST", "GET"])
+@app.route("/api/v1/reset", methods=["POST", "GET"])
 def api_reset():
     # El web client podra enviar un comando por modbus para reiniciar
     return jsonify({"status": "success", "message": "Comando de reset enviado."}), 200

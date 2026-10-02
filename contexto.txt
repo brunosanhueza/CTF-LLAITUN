@@ -42,25 +42,26 @@ Este es el flujo exacto y obligatorio que deben seguir los jugadores para ganar:
 
 FASE 1: Infiltración Inicial y SQLi
 - El jugador llega al `login.html`. Abajo ve un formulario de "Directorio Público de Operadores".
-- Ese formulario envía datos al endpoint `/buscar?query=`.
+- Ese formulario envía datos al endpoint `/api/v1/search?query=`.
 - El endpoint sufre de **SQL Injection puro** (string concatenation en `db.py`).
 - Usan SQLmap o UNION SELECT para dumpear la BD.
-- Ven 3 usuarios: `admin_scada` (hash indestructible), `op_turno1` (hash indestructible), y el fantasma `mantenimiento_out` (hash débil de `sistemas123`).
-- Rompen la clave del fantasma y hacen login en la web.
+- Ven 3 usuarios: `admin_scada` (hash indestructible), `op_turno1` (hash indestructible), y la cuenta de pruebas `testing` (hash débil de `sistemas12`).
+- Rompen la clave de testing con un ataque de diccionario (ej. rockyou.txt) y hacen login en la web.
 
 FASE 2: Fuzzing y Exfiltración LFI (Pivote IT)
-- Logueados como el fantasma, la web no muestra botones útiles.
-- Hacen fuzzing de rutas (`dirb`, `gobuster` con `common.txt`) y descubren `/portal/chat`.
+- Logueados como testing, la web no muestra botones útiles.
+- Hacen fuzzing de rutas (`dirb`, `gobuster` con `common.txt`) y descubren `/internal/messages`.
 - Leen un log de chat inventado donde el admin le dice al operador: *"Oye, te dejé tu llave SSH (id_rsa) tirada en la carpeta oculta /uploads. El usuario del servidor Debian es operador_it"*.
-- El jugador usa la vulnerabilidad de Local File Inclusion (LFI) existente en el portal para robársela: `/portal/download?file=../../uploads/id_rsa`.
+- El jugador usa la vulnerabilidad de Local File Inclusion (LFI) existente en el portal para robársela: `/intranet/download?file=../../uploads/id_rsa`.
 
-FASE 3: Escalada de Privilegios (Pwn / Ret2Libc)
-- Entran por SSH al servidor Debian como `operador_it`.
-- Intentan saltarse pasos leyendo los contenedores Docker (`docker ps`), pero obtienen "Permission Denied" porque no están en el grupo root.
-- Buscan archivos SUID (`find / -perm -4000`) y encuentran `/usr/local/bin/plc_diagnostic`.
-- *Fix aplicado:* Corregimos el código en C agregando `#define _GNU_SOURCE` para que compile bien en Debian.
-- Analizan el binario, ven el Buffer Overflow (`strcpy`) y arman un exploit Ret2Libc para saltarse el NX bit y ejecutar `system("/bin/sh")`.
-- ¡Consiguen consola `root` (`#`) en Debian!
+FASE 3: Escalada de Privilegios (Sudo Misconfiguration / Permisos Débiles)
+- Entran por SSH al servidor host como `operador_it`.
+- Intentan saltarse pasos manipulando Docker (`docker ps`), pero obtienen "Permission Denied".
+- Ejecutan `sudo -l` para verificar sus privilegios y ven que pueden ejecutar `sudo /opt/scripts/restart_scada.sh` sin contraseña (NOPASSWD).
+- Analizan los permisos del archivo (`ls -la /opt/scripts/restart_scada.sh`) y notan un grave error: tienen permisos de escritura (el archivo pertenece a `operador_it`).
+- Editan el script y le inyectan una shell al final: `echo "/bin/bash" >> /opt/scripts/restart_scada.sh`.
+- Ejecutan el script vía `sudo /opt/scripts/restart_scada.sh`.
+- ¡Consiguen consola `root` (`#`) en el host!
 
 FASE 4: El Impacto Cibercinético (Sabotaje SCADA)
 - Estando en el Debian como root, escanean la red y encuentran la Raspberry Pi (Puerto 502, Modbus TCP).
@@ -80,9 +81,9 @@ FASE 5: El "Trofeo de Vuelta" (Docker Pivot)
 --------------------------------------------------------------------------------
 - Hardware: Reparación de polaridad en relés de las bombas (2 pines por bomba).
 - Hardware: Desacople de los semáforos a hilos automáticos independientes.
-- C Code: Arreglo de dependencias en `plc_diagnostic.c` para que compile el exploit SUID.
+- Vulnerabilidad de Sistema: Se eliminó el reto "demasiado difícil" del Buffer Overflow en C (`plc_diagnostic.c`) y se reemplazó por un vector realista de escalada de privilegios basado en malas configuraciones de sudo (`sudo -l`) y permisos de archivos (`setup_sudo_vuln.sh`).
 - BD (`db.py`): Limpieza de contraseñas harcodeadas. Se añadieron los nuevos usuarios y la ruta vulnerable `buscar_operador`.
-- Web (`app.py`): Inserción del endpoint `/buscar`, endpoint `/portal/chat` (con los logs de pista) y preparación del render de la Flag en `/admin`.
+- Web (`app.py`): Inserción del endpoint `/api/v1/search`, endpoint `/internal/messages` (con los logs de pista) y preparación del render de la Flag en `/admin`.
 - UI (`login.html` & `admin.html`): Adición de la barra de búsqueda y el recuadro verde de la Flag.
 - CTF Design: Se diseñó el concepto del "Trofeo de Vuelta" y el bloqueo por permisos de Docker (evitando que root sea el fin del juego).
 
@@ -90,6 +91,6 @@ FASE 5: El "Trofeo de Vuelta" (Docker Pivot)
 5. PRÓXIMOS PASOS (LO QUE FALTA)
 --------------------------------------------------------------------------------
 1. Implementar la ofuscación de Python: Compilar `app.py` y `db.py` con PyArmor o Cython para que la Fase 5 funcione y los hackers no roben la flag haciendo un simple `cat`.
-2. Probar la inyección de SQLmap en el endpoint `/buscar` para confirmar que se vuelcan bien los usuarios.
+2. Probar la inyección de SQLmap en el endpoint `/api/v1/search` para confirmar que se vuelcan bien los usuarios.
 3. Asegurarse de que el contenedor de MySQL se levante con las claves correctas en el `docker-compose.yml`.
 4. Borrar la base de datos local SQLite vieja para que se regenere con los 3 nuevos perfiles.

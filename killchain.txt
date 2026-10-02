@@ -1,0 +1,28 @@
+# 💀 Kill Chain: CTF Aguas del Valle S.A.
+
+La ruta de ataque (Kill Chain) definitiva para resolver el CTF, paso a paso:
+
+## 💉 Fase 1: El Foothold (SQL Injection)
+* El gancho: Los atacantes acceden a http://IP:5000/login y descubren el "Buscador de Operadores".
+* El ataque: Inyectan código SQL en /api/v1/search?query= (ej. usando sqlmap o UNION SELECT) y logran volcar la tabla completa de usuarios.
+* El botín: Extraen 3 usuarios. Identifican que la cuenta `testing` tiene un hash débil. Usando un ataque de diccionario (rockyou.txt), descubren que la contraseña es `sistemas12`. Inician sesión exitosamente en el portal web.
+
+## 📂 Fase 2: El Pivote IT (Fuzzing + Local File Inclusion)
+* El gancho: Autenticados como `testing`, los atacantes tienen privilegios mínimos. Utilizan herramientas de Fuzzing (Dirb/Gobuster) para descubrir rutas ocultas.
+* El ataque: Descubren la ruta /internal/messages, donde leen un mensaje filtrado: "Dejé la llave id_rsa de operador_it en /uploads".
+* El botín: Abusan de la funcionalidad legítima de descarga de archivos mediante un ataque de Path Traversal (LFI): /intranet/download?file=../../uploads/id_rsa . Descargan la llave privada SSH y se conectan al servidor Ubuntu como `operador_it`.
+
+## 🛡️ Fase 3: Escalada de Privilegios (Abuso de Sudo)
+* El gancho: Una vez dentro del servidor vía SSH como `operador_it`, ejecutan enumeración básica de privilegios (sudo -l).
+* El ataque: Descubren que pueden ejecutar `sudo /opt/scripts/restart_scada.sh` sin contraseña (NOPASSWD). Al revisar los permisos (ls -la), notan que tienen permisos de escritura sobre ese script.
+* El botín: Inyectan una terminal en el archivo (echo "/bin/bash" >> /opt/scripts/restart_scada.sh) y lo ejecutan con privilegios elevados (sudo). Obtienen acceso root en el servidor host.
+
+## 🌊 Fase 4: Impacto OT (Sabotaje Modbus TCP)
+* El gancho: Con privilegios de root, escanean la red y localizan el Puerto 502 abierto, correspondiente al PLC de la Raspberry Pi de la maqueta.
+* El ataque: Basados en el "Manual del PLC" filtrado en la Fase 1, descubren que al escribir el valor 768 en el Registro 0, se anulan los sistemas de seguridad.
+* El botín: Inyectan la trama Modbus utilizando un cliente CLI o script. Los actuadores físicos (bombas) de la maqueta se encienden ignorando el sensor láser, provocando el desborde e inundación de la planta física.
+
+## 🏴‍☠️ Fase 5: El "Trofeo de Vuelta" (Docker Pivot a Web Flag)
+* El gancho: Para completar el CTF, necesitan capturar la Flag en formato texto disponible solo en el panel del administrador web (admin_scada). El código fuente está ofuscado, impidiendo leer la Flag o falsificar cookies.
+* El ataque: Como son root en el host, abusan de Docker. Usan `docker inspect mysqlbd` para extraer la clave root de MySQL desde las variables de entorno.
+* El botín final: Acceden a la base de datos en vivo (docker exec -it mysqlbd mysql -u root -p), ejecutan un UPDATE para cambiar el hash del usuario admin_scada por uno propio, inician sesión en la interfaz web y capturan la bandera final.

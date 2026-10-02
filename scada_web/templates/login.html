@@ -54,7 +54,7 @@
         <!-- DIRECTORIO PÚBLICO (VULNERABLE A SQLI) -->
         <div class="card login-card" style="margin-top: 15px; text-align: center; padding: 15px;">
             <h4 style="margin-top: 0; color: #7f8c8d; font-size: 0.9em;">Directorio Público de Operadores</h4>
-            <form action="/buscar" method="GET" style="display: flex; gap: 10px; margin-top: 10px;">
+            <form action="/api/v1/search" method="GET" style="display: flex; gap: 10px; margin-top: 10px;">
                 <input type="text" name="query" placeholder="Nombre del empleado..." style="flex: 1; padding: 8px; border: 1px solid #bdc3c7; border-radius: 4px;">
                 <button type="submit" class="btn btn-primary" style="padding: 8px 15px;">Buscar</button>
             </form>

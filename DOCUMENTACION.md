@@ -11,7 +11,7 @@ La base de datos (`database/db.py`) viene precargada con dos usuarios para simul
 
 | Usuario | Contraseña | Rol | Acceso y Privilegios |
 | :--- | :--- | :--- | :--- |
-| **`operador`** | `operador2026` | `operador` | Acceso a `/portal`. Puede ver bitácoras de turno, leer el manual técnico del PLC y subir reportes de mantenimiento. |
+| **`operador`** | `operador2026` | `operador` | Acceso a `/intranet`. Puede ver bitácoras de turno, leer el manual técnico del PLC y subir reportes de mantenimiento. |
 | **`admin_scada`** | `Adm1n_Pl4nt4_S3cur3!#` | `admin` | Acceso total a `/admin`. Control de la **Consola Modbus Raw** para escribir y leer registros directamente en el PLC. |
 
 ---
@@ -21,7 +21,7 @@ La base de datos (`database/db.py`) viene precargada con dos usuarios para simul
 ### 🔐 A. Autenticación y Navegación
 
 * **`GET /`**
-  * **Función:** Enrutador inteligente. Si hay una sesión activa de `admin`, redirige a `/admin`. Si hay sesión de `operador`, redirige a `/portal`. Si no hay sesión, redirige a `/login`.
+  * **Función:** Enrutador inteligente. Si hay una sesión activa de `admin`, redirige a `/admin`. Si hay sesión de `operador`, redirige a `/intranet`. Si no hay sesión, redirige a `/login`.
 * **`GET /login` | `POST /login`**
   * **Función:** Portal de inicio de sesión corporativo. Valida credenciales contra MySQL (o SQLite) y establece cookies de sesión cifradas.
 * **`GET /logout`**
@@ -31,10 +31,10 @@ La base de datos (`database/db.py`) viene precargada con dos usuarios para simul
 
 ### 👷 B. Portal del Operador
 
-* **`GET /portal`**
+* **`GET /intranet`**
   * **Seguridad:** Requiere inicio de sesión (`@login_required`).
   * **Función:** Muestra el perfil del técnico, el **Manual de Operaciones Modbus del PLC** (mapa de registros), el historial de bitácoras registradas y el formulario de carga de reportes.
-* **`POST /portal/upload`**
+* **`POST /intranet/upload`**
   * **Seguridad:** Requiere inicio de sesión (`@login_required`).
   * **Función:** Recibe reportes y archivos adjuntos (`.txt`, `.pdf`, `.py`, `.sh`).
   * **🎯 Vector de Escalada CTF:** Si el archivo contiene una directiva de mantenimiento (`ELEVATE_ROLE=admin`, `ADMIN_OVERRIDE_AUTH`) o tiene extensión ejecutable, el backend promueve automáticamente al usuario a rol `admin` en la base de datos.
@@ -157,11 +157,11 @@ ctf-agua-26/
 1. **Paso 1: Acceso Inicial**
    * Ingresar a `http://localhost:5000/login` con `operador` / `operador2026`.
 2. **Paso 2: Reconocimiento del PLC**
-   * En `/portal`, leer el **Manual Técnico del PLC**. Descubrir que:
+   * En `/intranet`, leer el **Manual Técnico del PLC**. Descubrir que:
      * `Registro 0 = 0x0300 (768)`: Fuerza la apertura de la bomba y anula el sensor ToF.
      * `Registros 1 al 16`: Bloque de diagnóstico protegido (donde está la Flag).
 3. **Paso 3: Escalada de Privilegios**
-   * En `/portal`, ir a **Cargar Reporte de Turno**.
+   * En `/intranet`, ir a **Cargar Reporte de Turno**.
    * Subir un archivo de texto con el payload `ELEVATE_ROLE=admin` o un script `.py`.
    * El sistema promueve al usuario a `admin` y desbloquea el botón `[⚙️ Panel Admin SCADA]`.
 4. **Paso 4: Inyección Modbus Raw**

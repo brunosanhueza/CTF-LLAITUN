@@ -108,7 +108,7 @@
 
             <section class="card">
                 <h2>Cargar Reporte de Turno / Documento</h2>
-                <form action="/portal/upload" method="POST" enctype="multipart/form-data" class="upload-form">
+                <form action="/intranet/upload" method="POST" enctype="multipart/form-data" class="upload-form">
                     <div class="form-group">
                         <label for="titulo">Título del Reporte</label>
                         <input type="text" id="titulo" name="titulo" placeholder="Ej: Bitácora de mantenimiento" required>
@@ -143,7 +143,7 @@
                             {% if b.archivo_adjunto %}
                                 <div class="bitacora-file">
                                     [+] Adjunto: <code>{{ b.archivo_adjunto }}</code>
-                                    <a href="/portal/download?file={{ b.archivo_adjunto }}" style="color: #4a90e2; text-decoration: none; margin-left: 10px; font-weight: bold;">[Descargar]</a>
+                                    <a href="/intranet/download?file={{ b.archivo_adjunto }}" style="color: #4a90e2; text-decoration: none; margin-left: 10px; font-weight: bold;">[Descargar]</a>
                                 </div>
                             {% endif %}
                             <small class="text-secondary">Registrado por: {{ b.autor }} ({{ b.rol }})</small>
