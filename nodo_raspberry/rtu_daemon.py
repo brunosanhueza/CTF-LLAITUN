@@ -1,3 +1,4 @@
+﻿# -*- coding: utf-8 -*-
 import time
 import threading
 import logging
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # MAPA DE HARDWARE
 # ============================================================================
-# Cada bomba usa DOS relés a la vez (polo +12V y retorno GND) para cerrar el circuito.
+# Cada bomba usa DOS relÃ©s a la vez (polo +12V y retorno GND) para cerrar el circuito.
 RELES_BOMBAS = {
     0: [4, 5],     # P1 (Canales 1 y 2)
     1: [6, 7],     # P2 (Canales 3 y 4)
@@ -38,7 +39,7 @@ try:
     HARDWARE_REAL = True
 except ImportError:
     HARDWARE_REAL = False
-    logger.warning("Simulación activa.")
+    logger.warning("SimulaciÃ³n activa.")
 
 try:
     from rpi_ws281x import ws
@@ -199,10 +200,10 @@ class HardwareManager:
                 if sensor:
                     try:
                         dist = sensor.range
-                        # Si da m�s de 8000, asumimos fuera de rango
+                        # Si da más de 8000, asumimos fuera de rango
                         distancias.append(dist if dist <= 8000 else 8190)
                     except Exception:
-                        # Si hay un error, 8190 evita que crea que est� a 0mm (Lleno al 166%)
+                        # Si hay un error, 8190 evita que crea que está a 0mm (Lleno al 166%)
                         distancias.append(8190)
                 else:
                     distancias.append(8190)
@@ -248,7 +249,7 @@ class AnimadorTiras(threading.Thread):
     def run(self):
         while self.corriendo:
             if getattr(self, 'modo_parpadeo', False):
-                # Efecto estroboscópico de alerta
+                # Efecto estroboscÃ³pico de alerta
                 self.hw.pintar_pixeles(self.hw.n_leds_tira, self.color_t1, self.color_t2)
                 time.sleep(0.2)
                 self.hw.pintar_pixeles(0, (0, 0, 0), (0, 0, 0))
@@ -314,7 +315,7 @@ class RtuHardwareGateway:
         self._contador_watchdog = 0
         self._estado_bombas_local = False
 
-        # Buffer para Promedio Móvil (Suavizado de Sensores)
+        # Buffer para Promedio MÃ³vil (Suavizado de Sensores)
         self.historial_distancias = {0: [], 1: [], 2: [], 3: []}
         self.max_muestras = 5
 
@@ -352,7 +353,7 @@ class RtuHardwareGateway:
 
     def _actualizar_luces(self, color_plc, max_pct_local):
         if color_plc == 0:
-            # Lógica local: depende del nivel de los estanques
+            # LÃ³gica local: depende del nivel de los estanques
             if max_pct_local >= 100.0:
                 self.animador_tiras.color_t1 = (255, 100, 0) # Naranjo
                 self.animador_tiras.color_t2 = (255, 100, 0)
@@ -384,7 +385,7 @@ class RtuHardwareGateway:
                     self.cliente.open()
 
                 if self.cliente.is_open:
-                    # 1. ENVIAR LECTURAS CRUDAS (Con Promedio Móvil)
+                    # 1. ENVIAR LECTURAS CRUDAS (Con Promedio MÃ³vil)
                     distancias_crudas = self.hw.leer_distancias_mm()
                     max_pct_calculado = 0.0
 
