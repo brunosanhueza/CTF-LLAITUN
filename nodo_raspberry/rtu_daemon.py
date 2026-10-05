@@ -241,8 +241,8 @@ class AnimadorTiras(threading.Thread):
         super().__init__(daemon=True)
         self.hw = hw
         self.corriendo = True
-        self.color_t1 = (0, 0, 255)
-        self.color_t2 = (255, 255, 255)
+        self.color_t1 = (0, 150, 255) # Celeste agua
+        self.color_t2 = (0, 150, 255) # Celeste agua
         self.velocidad_ms = 60
         self.modo_parpadeo = False
         
@@ -364,8 +364,8 @@ class RtuHardwareGateway:
                 self.animador_tiras.modo_parpadeo = False
                 self.animador_tiras.velocidad_ms = 40
             else:
-                self.animador_tiras.color_t1 = (0, 0, 255)   # Azul Normal
-                self.animador_tiras.color_t2 = (255, 255, 255)
+                self.animador_tiras.color_t1 = (0, 150, 255) # Celeste agua
+                self.animador_tiras.color_t2 = (0, 150, 255) # Celeste agua
                 self.animador_tiras.modo_parpadeo = False
                 self.animador_tiras.velocidad_ms = 60
         else:
@@ -385,9 +385,10 @@ class RtuHardwareGateway:
                     self.cliente.open()
 
                 if self.cliente.is_open:
-                    # 1. ENVIAR LECTURAS CRUDAS (Con Promedio MÃ³vil)
+                    # 1. ENVIAR LECTURAS CRUDAS (Con Promedio Movil)
                     distancias_crudas = self.hw.leer_distancias_mm()
                     max_pct_calculado = 0.0
+                    bits_alto_sensores = 0
 
                     if len(distancias_crudas) == 4:
                         distancias_suavizadas = []
@@ -402,7 +403,7 @@ class RtuHardwareGateway:
                             if len(self.historial_distancias[i]) > 0:
                                 promedio = int(sum(self.historial_distancias[i]) / len(self.historial_distancias[i]))
                             else:
-                                promedio = 50 # Vacío por defecto
+                                promedio = 50 # Vacio por defecto
                                 
                             distancias_suavizadas.append(promedio)
 
@@ -411,7 +412,17 @@ class RtuHardwareGateway:
                             if pct > max_pct_calculado:
                                 max_pct_calculado = pct
 
+                            # Control de tiempo en desbordamiento (10s)
+                            if pct >= 100.0:
+                                self.segundos_desbordados[i] += 1
+                            else:
+                                self.segundos_desbordados[i] = 0
+
+                            if self.segundos_desbordados[i] >= 10:
+                                bits_alto_sensores |= (1 << self.map_alto[i])
+
                         # HR 21 (P1)=ch2, HR 23 (P2)=ch0, HR 25 (P3)=ch3, HR 27 (P4)=ch1
+                        # Mapeo segun mapa_sensores.py del cuadrante 3
                         self.cliente.write_single_register(21, distancias_suavizadas[2])
                         self.cliente.write_single_register(23, distancias_suavizadas[0])
                         self.cliente.write_single_register(25, distancias_suavizadas[3])
@@ -432,6 +443,14 @@ class RtuHardwareGateway:
                         hr_bombas = regs_bombas[0]
                         hr_color = regs_color[0]
 
+                        # --- OVERRIDE DE DESBORDAMIENTO AL PLC ---
+                        # Inyectamos Sensor_Nivel_Alto (Bits 8,10,12,14) en HR 0. 
+                        # El PLC lo lee y bloquea el bombeo por seguridad.
+                        nuevo_hr0 = (hr_bombas & ~0x5500) | bits_alto_sensores
+                        if nuevo_hr0 != hr_bombas:
+                            self.cliente.write_single_register(0, nuevo_hr0)
+
+                        # Extraemos bits de comando
                         b1 = bool((hr_bombas >> 9) & 1)
                         b2 = bool((hr_bombas >> 11) & 1)
                         b3 = bool((hr_bombas >> 13) & 1)
@@ -448,38 +467,18 @@ class RtuHardwareGateway:
                         
                         # Actualizar luces con el color del PLC o la alerta de nivel
                         self._actualizar_luces(hr_color, max_pct_calculado)
+
                 else:
-                    # FAILSAFE
+                    # FAILSAFE: PLC caido o desconectado
                     self.hw.set_bombas(False)
-                    self.hw.set_luminarias(False)
                     self._estado_bombas_local = False
+                    self.hw.set_luminarias(False)
                     self.animador_tiras.modo_parpadeo = False
                     self.animador_tiras.color_t1 = (255, 0, 255)
                     self.animador_tiras.color_t2 = (255, 0, 255)
 
             except Exception as e:
-                logger.error(f"Error Ciclo PLC: {e}")
-                
-            # Disminuimos la velocidad de lectura a 1 segundo para evitar saturar el PLC y el I2C
+                import traceback
+                traceback.print_exc()
+
             time.sleep(1.0)
-
-    def detener(self):
-        self.corriendo = False
-        self.animador_tiras.corriendo = False
-        self.animador_semaforos.corriendo = False
-        self.animador_tiras.join(timeout=1.0)
-        self.animador_semaforos.join(timeout=1.0)
-        if self.cliente.is_open:
-            self.cliente.close()
-        self.hw.limpiar()
-
-if __name__ == "__main__":
-    gateway = RtuHardwareGateway()
-    try:
-        gateway.iniciar()
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        gateway.detener()
-
-
