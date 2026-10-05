@@ -316,6 +316,12 @@ class RtuHardwareGateway:
         self.historial_distancias = {0: [], 1: [], 2: [], 3: []}
         self.max_muestras = 5
 
+        # Control de desbordamiento (10 segundos)
+        self.segundos_desbordados = {0: 0, 1: 0, 2: 0, 3: 0}
+        # Mapeo de canal I2C al bit Sensor_Nivel_Alto del PLC
+        # I2C 0 (P2)->Bit 10, I2C 1 (P4)->Bit 14, I2C 2 (P1)->Bit 8, I2C 3 (P3)->Bit 12
+        self.map_alto = {0: 10, 1: 14, 2: 8, 3: 12}
+
         # Mapa de colores del PLC (Flag 4)
         self.mapa_colores = {
             1: (255, 0, 0),     # Rojo
@@ -465,3 +471,4 @@ if __name__ == "__main__":
             time.sleep(1)
     except KeyboardInterrupt:
         gateway.detener()
+
