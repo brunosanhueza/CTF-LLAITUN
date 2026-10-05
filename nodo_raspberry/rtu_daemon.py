@@ -392,11 +392,18 @@ class RtuHardwareGateway:
                     if len(distancias_crudas) == 4:
                         distancias_suavizadas = []
                         for i in range(4):
-                            self.historial_distancias[i].append(distancias_crudas[i])
-                            if len(self.historial_distancias[i]) > self.max_muestras:
-                                self.historial_distancias[i].pop(0)
+                            dist_cruda = distancias_crudas[i]
+                            # Ignorar lecturas de error (8190) para no arruinar el promedio
+                            if dist_cruda < 8000:
+                                self.historial_distancias[i].append(dist_cruda)
+                                if len(self.historial_distancias[i]) > self.max_muestras:
+                                    self.historial_distancias[i].pop(0)
                             
-                            promedio = int(sum(self.historial_distancias[i]) / len(self.historial_distancias[i]))
+                            if len(self.historial_distancias[i]) > 0:
+                                promedio = int(sum(self.historial_distancias[i]) / len(self.historial_distancias[i]))
+                            else:
+                                promedio = 50 # Vacío por defecto
+                                
                             distancias_suavizadas.append(promedio)
 
                             # Calculamos el % solo para ver si alertamos con luces
