@@ -1,0 +1,35 @@
+# Dependencias del cuadrante 3.
+#
+# En un PC de escritorio basta con PyQt5: el resto se sustituye automaticamente
+# por el simulador de hal.py. En la Raspberry Pi hacen falta todas.
+#
+#   PC (solo para ver la interfaz):   pip install PyQt5
+#   Raspberry Pi:                     ver README.md, seccion "Instalacion"
+
+# --- Interfaz -------------------------------------------------------------
+# En Raspberry Pi OS conviene instalarlo por apt (python3-pyqt5), no por pip:
+# el paquete de Debian trae las bibliotecas Qt del sistema ya compiladas.
+PyQt5>=5.15
+
+# --- Solo Raspberry Pi ----------------------------------------------------
+# GPIO. Valido para Raspberry Pi 3B+ y 4 (las que usa la maqueta).
+# En Raspberry Pi 5 hay que reemplazarlo por rpi-lgpio.
+RPi.GPIO>=0.7.1
+
+# Pila de Adafruit para I2C. adafruit_tca9548a resuelve el problema de los
+# cuatro VL53L0X con la misma direccion: entrega un bus por canal del
+# multiplexor y conmuta el canal en cada transaccion.
+adafruit-blinka>=8.20
+adafruit-circuitpython-tca9548a>=0.7
+adafruit-circuitpython-vl53l0x>=3.6
+
+# Tiras direccionables SK6812 / WS2812 por PWM0 y PWM1.
+# OJO: accede directo a DMA y PWM, asi que el programa debe correr como root
+# (sudo). Si no puede, el software cae a tiras simuladas y avisa en pantalla.
+rpi_ws281x>=5.0
+
+# --- Puente con el PLC (plc_bridge.py) -------------------------------------
+# Cliente Modbus TCP, misma libreria que ya usan los scripts de ataque del
+# Sector 3 (capturar_todas_las_flags.py y similares). No requiere permisos
+# especiales: funciona igual con o sin sudo.
+pyModbusTCP>=0.2.1
