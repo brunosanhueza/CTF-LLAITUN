@@ -241,14 +241,23 @@ class AnimadorTiras(threading.Thread):
         self.color_t1 = (0, 0, 255)
         self.color_t2 = (255, 255, 255)
         self.velocidad_ms = 60
+        self.modo_parpadeo = False
         
     def run(self):
         while self.corriendo:
+            if getattr(self, 'modo_parpadeo', False):
+                # Efecto estroboscópico de alerta
+                self.hw.pintar_pixeles(self.hw.n_leds_tira, self.color_t1, self.color_t2)
+                time.sleep(0.2)
+                self.hw.pintar_pixeles(0, (0, 0, 0), (0, 0, 0))
+                time.sleep(0.2)
+                continue
+
             n_leds = self.hw.n_leds_tira
             
             # Llenado gradual
             for i in range(n_leds + 1):
-                if not self.corriendo: return
+                if not self.corriendo or getattr(self, 'modo_parpadeo', False): break
                 self.hw.pintar_pixeles(i, self.color_t1, self.color_t2)
                 time.sleep(max(10, self.velocidad_ms) / 1000.0)
                 
@@ -325,12 +334,34 @@ class RtuHardwareGateway:
             self.animador_semaforos.start()
             threading.Thread(target=self._bucle_control, daemon=True).start()
 
-    def _actualizar_color_flag4(self, color_plc):
+    def _calcular_pct_local(self, mm):
+        vacio = 50 # DIST_VACIO_MM
+        lleno = 20 # DIST_LLENO_MM
+        if mm > 8000: return 0.0
+        if vacio == lleno: return 0.0
+        pct = (vacio - mm) / (vacio - lleno) * 100.0
+        return max(0.0, pct)
+
+    def _actualizar_luces(self, color_plc, max_pct_local):
         if color_plc == 0:
-            self.animador_tiras.color_t1 = (0, 0, 255)
-            self.animador_tiras.color_t2 = (255, 255, 255)
-            self.animador_tiras.velocidad_ms = 60
+            # Lógica local: depende del nivel de los estanques
+            if max_pct_local >= 100.0:
+                self.animador_tiras.color_t1 = (255, 100, 0) # Naranjo
+                self.animador_tiras.color_t2 = (255, 100, 0)
+                self.animador_tiras.modo_parpadeo = True
+            elif max_pct_local >= 85.0:
+                self.animador_tiras.color_t1 = (255, 255, 0) # Amarillo
+                self.animador_tiras.color_t2 = (255, 255, 0)
+                self.animador_tiras.modo_parpadeo = False
+                self.animador_tiras.velocidad_ms = 40
+            else:
+                self.animador_tiras.color_t1 = (0, 0, 255)   # Azul Normal
+                self.animador_tiras.color_t2 = (255, 255, 255)
+                self.animador_tiras.modo_parpadeo = False
+                self.animador_tiras.velocidad_ms = 60
         else:
+            # Override del PLC (Modo fiesta o Flag)
+            self.animador_tiras.modo_parpadeo = False
             color_rgb = self.mapa_colores.get(color_plc, (255, 255, 255))
             self.animador_tiras.color_t1 = color_rgb
             self.animador_tiras.color_t2 = color_rgb
@@ -347,6 +378,8 @@ class RtuHardwareGateway:
                 if self.cliente.is_open:
                     # 1. ENVIAR LECTURAS CRUDAS (Con Promedio Móvil)
                     distancias_crudas = self.hw.leer_distancias_mm()
+                    max_pct_calculado = 0.0
+
                     if len(distancias_crudas) == 4:
                         distancias_suavizadas = []
                         for i in range(4):
@@ -356,6 +389,11 @@ class RtuHardwareGateway:
                             
                             promedio = int(sum(self.historial_distancias[i]) / len(self.historial_distancias[i]))
                             distancias_suavizadas.append(promedio)
+
+                            # Calculamos el % solo para ver si alertamos con luces
+                            pct = self._calcular_pct_local(promedio)
+                            if pct > max_pct_calculado:
+                                max_pct_calculado = pct
 
                         # HR 21 (P1)=ch2, HR 23 (P2)=ch0, HR 25 (P3)=ch3, HR 27 (P4)=ch1
                         self.cliente.write_single_register(21, distancias_suavizadas[2])
@@ -391,12 +429,15 @@ class RtuHardwareGateway:
                         self._estado_bombas_local = b1 or b2 or b3 or b4
 
                         self.hw.set_luminarias(hr_color != 0)
-                        self._actualizar_color_flag4(hr_color)
+                        
+                        # Actualizar luces con el color del PLC o la alerta de nivel
+                        self._actualizar_luces(hr_color, max_pct_calculado)
                 else:
                     # FAILSAFE
                     self.hw.set_bombas(False)
                     self.hw.set_luminarias(False)
                     self._estado_bombas_local = False
+                    self.animador_tiras.modo_parpadeo = False
                     self.animador_tiras.color_t1 = (255, 0, 255)
                     self.animador_tiras.color_t2 = (255, 0, 255)
 
