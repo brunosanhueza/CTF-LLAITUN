@@ -482,3 +482,26 @@ class RtuHardwareGateway:
                 traceback.print_exc()
 
             time.sleep(1.0)
+    def detener(self):
+        self.corriendo = False
+        
+        self.animador_tiras.corriendo = False
+        self.animador_semaforos.corriendo = False
+        
+        self.animador_tiras.join(timeout=1.0)
+        self.animador_semaforos.join(timeout=1.0)
+        
+        if self.cliente.is_open:
+            self.cliente.close()
+        self.hw.limpiar()
+
+if __name__ == "__main__":
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    gateway = RtuHardwareGateway()
+    try:
+        gateway.iniciar()
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        gateway.detener()
