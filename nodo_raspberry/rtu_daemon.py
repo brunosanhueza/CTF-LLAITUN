@@ -192,6 +192,22 @@ class HardwareManager:
         else:
             return self.niveles_simulados
 
+    def leer_distancias_mm(self):
+        if HARDWARE_REAL:
+            distancias = []
+            for sensor in self.sensores:
+                if sensor:
+                    try:
+                        dist = sensor.range
+                        distancias.append(dist if dist <= 8000 else 0)
+                    except Exception:
+                        distancias.append(0)
+                else:
+                    distancias.append(0)
+            return distancias
+        else:
+            return [200, 200, 200, 200]
+
     def actualizar_simulacion(self, bombas_activas):
         if not HARDWARE_REAL:
             if getattr(self, 'override_niveles', None) is not None:
@@ -283,10 +299,20 @@ class RtuHardwareGateway:
         self.animador_tiras = AnimadorTiras(self.hw)
         self.animador_semaforos = AnimadorSemaforos(self.hw)
         
-        self.limite_seguridad_pct = 85.0
-        self.bombas_activas = True
-        self.estado = "NORMAL"
         self.corriendo = False
+        self._contador_watchdog = 0
+        self._estado_bombas_local = False
+
+        # Mapa de colores del PLC (Flag 4)
+        self.mapa_colores = {
+            1: (255, 0, 0),     # Rojo
+            2: (0, 255, 0),     # Verde
+            3: (0, 0, 255),     # Azul
+            4: (255, 140, 0),   # Ambar
+            5: (0, 200, 255),   # Cian
+            6: (255, 0, 200),   # Magenta
+            7: (255, 255, 255)  # Blanco
+        }
 
     def iniciar(self):
         if not self.corriendo:
@@ -295,81 +321,91 @@ class RtuHardwareGateway:
             self.animador_semaforos.start()
             threading.Thread(target=self._bucle_control, daemon=True).start()
 
-    def _actualizar_luces_estado(self, hr_luces):
-        # El PLC ahora dictamina el color de las luces.
-        # hr_luces = 1 -> Rojo (Inundación Crítica)
-        # hr_luces = 2 -> Naranja (Alerta Límite)
-        # Otro valor -> Azul Normal
-        if hr_luces == 1:
-            self.animador_tiras.color_t1 = (255, 0, 0)
-            self.animador_tiras.color_t2 = (255, 0, 0)
-            self.animador_tiras.velocidad_ms = 20
-        elif hr_luces == 2:
-            self.animador_tiras.color_t1 = (255, 140, 0)
-            self.animador_tiras.color_t2 = (255, 140, 0)
-            self.animador_tiras.velocidad_ms = 40
-        else:
+    def _actualizar_color_flag4(self, color_plc):
+        # Color_LED_Flag4 (HR10)
+        if color_plc == 0:
+            # Vuelve a la animación azul de llenado
             self.animador_tiras.color_t1 = (0, 0, 255)
             self.animador_tiras.color_t2 = (255, 255, 255)
             self.animador_tiras.velocidad_ms = 60
+        else:
+            # Toma el color del mapa o se queda blanco por defecto
+            color_rgb = self.mapa_colores.get(color_plc, (255, 255, 255))
+            self.animador_tiras.color_t1 = color_rgb
+            self.animador_tiras.color_t2 = color_rgb
+            self.animador_tiras.velocidad_ms = 20 # Modo fiesta rápido
 
     def _bucle_control(self):
         while self.corriendo:
             try:
-                # Actualiza la maqueta visual/simulada (solo estética)
-                self.hw.actualizar_simulacion(getattr(self, '_estado_bombas_local', False))
+                self.hw.actualizar_simulacion(self._estado_bombas_local)
                 
-                # 1. LEER SENSORES FÍSICOS (Sin tomar decisiones)
-                niveles_pct = self.hw.leer_niveles_pct()
-
-                # Forzar apertura de conexión TCP si estaba cerrada
                 if not self.cliente.is_open:
                     self.cliente.open()
 
                 if self.cliente.is_open:
-                    # 2. ESCRIBIR SENSORES AL PLC (Ojos del PLC)
-                    if len(niveles_pct) == 4:
-                        # Escribimos en HR 21, 22, 23 y 24 (escalados x10 para mantener decimales)
-                        self.cliente.write_multiple_registers(21, [int(n * 10) for n in niveles_pct])
-                        # Escribimos un latido (Watchdog) en HR 25 para que el PLC sepa que estamos vivos
-                        latido = int(time.time()) % 65535
-                        self.cliente.write_single_register(25, latido)
+                    # 1. ENVIAR LECTURAS CRUDAS (RAW en milímetros)
+                    # El hardware tiene 4 canales I2C fijos que mapean así:
+                    # ch0 -> P2, ch1 -> P4, ch2 -> P1, ch3 -> P3
+                    distancias = self.hw.leer_distancias_mm()
+                    if len(distancias) == 4:
+                        # HR 21 (P1)=ch2, HR 23 (P2)=ch0, HR 25 (P3)=ch3, HR 27 (P4)=ch1
+                        self.cliente.write_single_register(21, distancias[2])
+                        self.cliente.write_single_register(23, distancias[0])
+                        self.cliente.write_single_register(25, distancias[3])
+                        self.cliente.write_single_register(27, distancias[1])
+                        self.cliente.write_single_register(41, 0) # ErrCode = 0
+                    else:
+                        self.cliente.write_single_register(41, 1) # ErrCode = 1 (Fallo sensores)
 
-                    # 3. LEER ORDENES DEL PLC (Cerebro externo)
-                    # Leemos HR 0 (Comandos de Bombas) y HR 1 (Comandos de Luces)
-                    regs = self.cliente.read_holding_registers(0, 2)
-                    if regs:
-                        hr_estado_bombas = regs[0]
-                        hr_estado_luces = regs[1]
+                    # Watchdog (Latido de red hacia el PLC)
+                    self._contador_watchdog = (self._contador_watchdog + 1) & 0xFFFF
+                    self.cliente.write_single_register(40, self._contador_watchdog)
 
-                        # Extraemos el Bit 9 (512) para encender las bombas
-                        encender_bombas = bool((hr_estado_bombas >> 9) & 1)
-                        self.hw.set_bombas(encender_bombas)
-                        self._estado_bombas_local = encender_bombas
+                    # 2. LEER COMANDOS DEL PLC
+                    # Leemos HR 0 (Comandos Bombas) y HR 10 (Color Tiras/Luminarias)
+                    regs_bombas = self.cliente.read_holding_registers(0, 1)
+                    regs_color = self.cliente.read_holding_registers(10, 1)
 
-                        # Actualizamos las luces según lo dicte el PLC
-                        self._actualizar_luces_estado(hr_estado_luces)
+                    if regs_bombas and regs_color:
+                        hr_bombas = regs_bombas[0]
+                        hr_color = regs_color[0]
+
+                        # Extraemos bits de comando: P1=9, P2=11, P3=13, P4=15
+                        b1 = bool((hr_bombas >> 9) & 1)
+                        b2 = bool((hr_bombas >> 11) & 1)
+                        b3 = bool((hr_bombas >> 13) & 1)
+                        b4 = bool((hr_bombas >> 15) & 1)
+
+                        self.hw.set_bomba(0, b1)
+                        self.hw.set_bomba(1, b2)
+                        self.hw.set_bomba(2, b3)
+                        self.hw.set_bomba(3, b4)
+                        
+                        self._estado_bombas_local = b1 or b2 or b3 or b4
+
+                        # Efecto Flag 4: Luminarias encendidas si HR10 != 0
+                        self.hw.set_luminarias(hr_color != 0)
+                        self._actualizar_color_flag4(hr_color)
                 else:
-                    # FAILSAFE: Si el PLC se desconecta, APAGAR TODO POR SEGURIDAD FÍSICA
+                    # FAILSAFE: PLC DESCONECTADO
                     self.hw.set_bombas(False)
+                    self.hw.set_luminarias(False)
                     self._estado_bombas_local = False
-                    self.animador_tiras.color_t1 = (255, 0, 255) # Magenta de error de red
+                    self.animador_tiras.color_t1 = (255, 0, 255) # Magenta Failsafe
                     self.animador_tiras.color_t2 = (255, 0, 255)
 
             except Exception as e:
-                logger.error(f"Error Modbus / Ciclo PLC: {e}")
+                logger.error(f"Error Ciclo PLC: {e}")
                 
             time.sleep(0.3)
 
     def detener(self):
         self.corriendo = False
-        
         self.animador_tiras.corriendo = False
         self.animador_semaforos.corriendo = False
-        
         self.animador_tiras.join(timeout=1.0)
         self.animador_semaforos.join(timeout=1.0)
-        
         if self.cliente.is_open:
             self.cliente.close()
         self.hw.limpiar()
