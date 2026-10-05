@@ -6,11 +6,16 @@ from pyModbusTCP.client import ModbusClient
 class WebScadaClient:
     def __init__(self, socketio, target_ip=None, target_port=502):
         self.socketio = socketio
-        self.target_ip = target_ip or os.environ.get("PLC_HOST", "192.168.60.10")
+        self.target_ip = target_ip or os.environ.get("PLC_HOST", "10.10.30.100")
         self.target_port = target_port
         self.cliente = ModbusClient(host=self.target_ip, port=self.target_port, auto_open=True, timeout=2.0)
         self.corriendo = False
         self._thread = None
+        
+        # Buffer para el Promedio Móvil (Suavizado de sensores en vivo)
+        self.historial_niveles = {0: [], 1: [], 2: [], 3: []}
+        self.max_muestras = 5  # Promediar las últimas 5 lecturas
+        
         self._telemetria = {
             "estanques": [25.0, 25.0, 25.0, 25.0],
             "bomba_activa": True,
@@ -28,22 +33,31 @@ class WebScadaClient:
     def _bucle_lectura(self):
         while self.corriendo:
             try:
-                # Leer registros: 
-                # 0: Override
-                # 17-20: Niveles estanques 1-4
-                # 21: Estado Bomba (1 = activa, 0 = apagada)
-                regs_override = self.cliente.read_holding_registers(0, 1)
-                regs_niveles = self.cliente.read_holding_registers(17, 5)
+                # Leer registros del nuevo mapa TIA Portal (DB4): 
+                # HR 0: Comandos y Estado de Bombas (Bit 9 = Bomba 1)
+                # HR 21-24: Escalamiento_Sensores (Niveles estanques 1-4)
+                regs_estado = self.cliente.read_holding_registers(0, 1)
+                regs_niveles = self.cliente.read_holding_registers(21, 4)
                 
-                if regs_override is not None and regs_niveles is not None:
-                    self._telemetria["sensor_bypassed"] = (regs_override[0] == 768)
-                    self._telemetria["estanques"] = [
-                        regs_niveles[0] / 10.0,
-                        regs_niveles[1] / 10.0,
-                        regs_niveles[2] / 10.0,
-                        regs_niveles[3] / 10.0
-                    ]
-                    self._telemetria["bomba_activa"] = (regs_niveles[4] == 1)
+                if regs_estado is not None and regs_niveles is not None:
+                    # Extraer el estado de la bomba del Bit 9 (512)
+                    self._telemetria["bomba_activa"] = bool((regs_estado[0] >> 9) & 1)
+                    
+                    # Calcular el Promedio Móvil para dar efecto de telemetría "En Vivo" sin saltos bruscos
+                    for i in range(4):
+                        val_crudo = regs_niveles[i] / 10.0
+                        self.historial_niveles[i].append(val_crudo)
+                        
+                        # Mantener el buffer en el tamaño máximo
+                        if len(self.historial_niveles[i]) > self.max_muestras:
+                            self.historial_niveles[i].pop(0)
+                            
+                        # Calcular promedio y redondear a 1 decimal
+                        promedio = sum(self.historial_niveles[i]) / len(self.historial_niveles[i])
+                        self._telemetria["estanques"][i] = round(promedio, 1)
+                    
+                    # Podemos usar el valor crudo del registro 0 para detectar si hay anomalias
+                    self._telemetria["sensor_bypassed"] = (regs_estado[0] != 0)
                     
                     if self._telemetria["sensor_bypassed"]:
                         self._telemetria["estado"] = "OVERRIDE_ACTIVO"

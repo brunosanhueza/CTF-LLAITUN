@@ -5,7 +5,7 @@ FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     FLASK_ENV=production \
-    PLC_HOST=192.168.60.10 \
+    PLC_HOST=10.10.30.100 \
     DB_TYPE=mysql \
     MYSQL_HOST=host.docker.internal \
     MYSQL_PORT=3306 \
@@ -32,6 +32,10 @@ COPY . .
 RUN python -m compileall -b . && \
     find . -type f -name "*.py" -delete && \
     rm -rf /root/.cache
+
+# Copiar el archivo trampa para la Fase 2 (LFI + Path Traversal)
+COPY credenciales_ot.bak /var/backups/credenciales_ot.bak
+RUN chmod 444 /var/backups/credenciales_ot.bak
 
 # Crear usuario seguro sin privilegios
 RUN useradd -m -u 1001 scadauser && \

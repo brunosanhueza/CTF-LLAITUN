@@ -1,28 +1,64 @@
-# 💀 Kill Chain: CTF Aguas del Valle S.A.
+# 🎯 Kill Chain: CTF Aguas del Valle S.A.
+*(Guía de Arquitectura de Red y Flujo de Explotación)*
 
-La ruta de ataque (Kill Chain) definitiva para resolver el CTF, paso a paso:
+## 🗺️ 1. Topología y Componentes de Red (Para pfSense / Diagrama)
 
-## 💉 Fase 1: El Foothold (SQL Injection)
-* **El gancho:** Los atacantes acceden a `http://IP:5000/login` y descubren el "Buscador de Operadores".
-* **El ataque:** Inyectan código SQL en `/api/v1/search?query=` (ej. usando `sqlmap` o UNION SELECT) y logran volcar la tabla completa de `usuarios`.
-* **El botín:** Extraen 3 usuarios. Identifican que la cuenta `testing` tiene un hash débil. Usando un ataque de diccionario (`rockyou.txt`), descubren que la contraseña es `sistemas12`. Inician sesión exitosamente en el portal web.
+El entorno se divide en tres zonas separadas por el firewall (pfSense):
+1. **Red WAN / Atacante:** El exterior (Internet o VPN de jugadores).
+2. **Red IT (Corporativa):** Servidor Debian Host + Contenedores Docker.
+3. **Red OT (Industrial):** Maqueta física con la Raspberry Pi (totalmente aislada).
 
-## 📂 Fase 2: El Pivote IT (Fuzzing + Local File Inclusion)
-* **El gancho:** Autenticados como `testing`, los atacantes tienen privilegios mínimos. Utilizan herramientas de Fuzzing (Dirb/Gobuster) para descubrir rutas ocultas.
-* **El ataque:** Descubren la ruta `/internal/messages`, donde leen un mensaje filtrado: *"Dejé la llave id_rsa de operador_it en /uploads"*.
-* **El botín:** Abusan de la funcionalidad legítima de descarga de archivos mediante un ataque de Path Traversal (LFI): `/intranet/download?file=../../uploads/id_rsa`. Descargan la llave privada SSH y se conectan al servidor Ubuntu como `operador_it`.
+### Inventario de Puertos y Servicios
+**Servidor Host (Debian Linux - Red IT)**
+*   **Servicio 1:** SSH (Puerto TCP `22`).
+*   **Servicio 2:** Docker Daemon (Socket interno `/var/run/docker.sock`).
+*   **Contenedor A (`scada_web`):** Aplicación Flask. Expuesta a WAN por el puerto TCP `5000` (HTTP).
+*   **Contenedor B (`mysqlbd`):** Base de Datos. Puerto TCP `3306` (Comunicación interna directa con Flask, no expuesto a WAN).
 
-## 🛡️ Fase 3: Escalada de Privilegios (Abuso de Sudo)
-* **El gancho:** Una vez dentro del servidor vía SSH como `operador_it`, ejecutan enumeración básica de privilegios (`sudo -l`).
-* **El ataque:** Descubren que pueden ejecutar `sudo /opt/scripts/restart_scada.sh` sin contraseña (NOPASSWD). Al revisar los permisos (`ls -la`), notan que tienen permisos de escritura sobre ese script.
-* **El botín:** Inyectan una terminal en el archivo (`echo "/bin/bash" >> /opt/scripts/restart_scada.sh`) y lo ejecutan con privilegios elevados (`sudo`). Obtienen acceso **root** en el servidor host.
+**Nodo Físico Edge (Raspberry Pi - Red OT)**
+*   **Servicio:** Demonio RTU Python / PLC Simulado.
+*   **Puerto:** TCP `502` (Modbus TCP).
+*   **Hardware Conectado:** Relés (Bombas de agua 12V), Sensor I2C VL53L0X (Láser de distancia), Tiras LED WS2812B.
 
-## 🌊 Fase 4: Impacto OT (Sabotaje Modbus TCP)
-* **El gancho:** Con privilegios de `root`, escanean la red y localizan el Puerto `502` abierto, correspondiente al PLC de la Raspberry Pi de la maqueta.
-* **El ataque:** Basados en el "Manual del PLC" filtrado en la Fase 1, descubren que al escribir el valor `768` en el `Registro 0`, se anulan los sistemas de seguridad (Overdrive).
-* **El botín:** Inyectan la trama Modbus utilizando un cliente CLI o script. Los actuadores físicos (bombas) de la maqueta se encienden ignorando el sensor láser, provocando el desborde e inundación de la planta física.
+---
 
-## 🏴‍☠️ Fase 5: El "Trofeo de Vuelta" (Docker Pivot a Web Flag)
-* **El gancho:** Para completar el CTF, necesitan capturar la Flag en formato texto disponible solo en el panel del administrador web (`admin_scada`). El código fuente está ofuscado, impidiendo leer la Flag o falsificar cookies.
-* **El ataque:** Como son `root` en el host, abusan de Docker. Usan `docker inspect mysqlbd` para extraer la clave root de MySQL desde las variables de entorno.
-* **El botín final:** Acceden a la base de datos en vivo (`docker exec -it mysqlbd mysql -u root -p`), ejecutan un `UPDATE` para cambiar el hash del usuario `admin_scada` por uno propio, inician sesión en la interfaz web y capturan la bandera final.
+## 🔗 2. Flujo de Ataque Paso a Paso (La Kill Chain)
+
+### 🟢 FASE 1: Infiltración Web (SQL Injection)
+*   **Origen:** Atacante (WAN)
+*   **Destino:** Debian Host -> `scada_web` (Puerto 5000) -> `mysqlbd` (Puerto 3306)
+*   **Acción:** El tráfico HTTP entra al endpoint `/api/v1/search`. El contenedor Flask envía una consulta SQL cruda al contenedor MySQL. El atacante roba el hash de la cuenta `testing`, lo rompe offline (diccionario) y logra acceso al panel web.
+
+### 🟡 FASE 2: Fuzzing y Path Traversal (Robo LFI)
+*   **Origen:** Atacante (WAN)
+*   **Destino:** Debian Host -> `scada_web` (Puerto 5000)
+*   **Acción:** El atacante hace fuzzing y descubre la ruta oculta `/internal/messages` (pista). Luego, lanza un ataque LFI hacia `/intranet/download?file=...` para leer el archivo interno del contenedor `/var/backups/credenciales_ot.bak`.
+*   **Loot:** Descifra el contenido (ROT47) para obtener la **[FLAG 1]** y las credenciales SSH válidas para el sistema operativo.
+
+### 🟠 FASE 3: Salto Lateral y Escalada (Pivote de Red)
+*   **Origen:** Atacante (WAN)
+*   **Destino:** Servidor Debian Host (Puerto 22)
+*   **Acción:** Cambio de protocolo y Capa. El atacante conecta por SSH usando las credenciales robadas (`operador_it`).
+*   **Escalada (Local):** Ya dentro del servidor, ejecuta `sudo -l` y encuentra un script mal configurado con permisos de escritura. Inyecta el comando `/bin/bash` al final del script y escala a privilegios de **Root**.
+
+### 🔴 FASE 4: El Impacto Cibercinético (Sabotaje SCADA)
+*   **Origen:** Servidor Debian Host (El Atacante como Root)
+*   **Destino:** Raspberry Pi en Red OT (Puerto 502)
+*   **Acción:** El atacante pivota desde la red IT hacia la red OT. Envía paquetes **Modbus TCP** al puerto 502 de la Raspberry Pi escribiendo el valor `768` en el Registro 0.
+*   **Loot:** La Raspberry desborda físicamente el agua e ilumina todo en rojo ("INUNDACIÓN CRÍTICA"). El atacante lee de vuelta los registros Modbus para capturar la **[FLAG 2]** que el demonio acaba de escribir en memoria.
+
+### 🟣 FASE 5: El "Trofeo de Vuelta" (Post-Explotación Docker)
+*   **Origen:** Servidor Debian Host (El Atacante como Root)
+*   **Destino:** Contenedor `mysqlbd` (Vía Socket Docker) -> `scada_web` (Puerto 5000)
+*   **Acción:** Como Root, el atacante usa comandos `docker exec` para entrar directamente a la memoria viva de MySQL y sobrescribe el hash del administrador con uno que él inventa. 
+*   **Cierre:** El atacante vuelve a hacer una conexión web desde su máquina (WAN) al Puerto 5000, inicia sesión como Admin y la interfaz web desencripta y renderiza la **[FLAG 3]**.
+
+---
+
+## 🛡️ 3. Reglas de Enrutamiento en pfSense (El Candado del CTF)
+Para que el diseño de esta máquina sea realista y obligue al jugador a seguir todas las fases sin saltarse pasos, el firewall pfSense debe cumplir estas 3 reglas estrictas:
+
+1. **Permitir a WAN -> IT:** El atacante externo solo puede acceder a la IP del servidor Debian por los puertos **5000 (HTTP)** y **22 (SSH)**.
+2. **Bloquear WAN -> OT:** El atacante **NO TIENE** acceso directo a la IP de la Raspberry Pi. Las peticiones directas desde el exterior al puerto 502 deben ser dropeadas.
+3. **Permitir IT -> OT:** El servidor Debian **SÍ TIENE** permisos para enviar tráfico al puerto 502 de la Raspberry Pi.
+*(Esta configuración obliga al hacker a vulnerar el servidor Debian corporativo para usarlo obligatoriamente como un puente o pivote hacia la infraestructura física).*

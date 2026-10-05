@@ -10,7 +10,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      - PLC_HOST=192.168.60.10
+      - PLC_HOST=10.10.30.100
       - DB_TYPE=mysql
       - MYSQL_HOST=host.docker.internal
       - MYSQL_PORT=3306

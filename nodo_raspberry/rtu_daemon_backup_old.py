@@ -205,8 +205,7 @@ class HardwareManager:
         if HARDWARE_REAL:
             self.set_bombas(False)
             self.set_luminarias(False)
-            self.set_semaforo(1, "rojo")
-            self.set_semaforo(2, "rojo")
+            self.set_semaforos("rojo")
             GPIO.cleanup()
         if HAY_TIRAS and self.leds:
             try:
@@ -275,7 +274,7 @@ class AnimadorSemaforos(threading.Thread):
 
 class RtuHardwareGateway:
     def __init__(self):
-        self.plc_ip = os.environ.get("PLC_HOST", "10.10.30.100")
+        self.plc_ip = os.environ.get("PLC_HOST", "192.168.60.10")
         self.plc_port = int(os.environ.get("PLC_PORT", 502))
         
         self.cliente = ModbusClient(host=self.plc_ip, port=self.plc_port, auto_open=True, timeout=2.0)
@@ -295,71 +294,99 @@ class RtuHardwareGateway:
             self.animador_semaforos.start()
             threading.Thread(target=self._bucle_control, daemon=True).start()
 
-    def _actualizar_luces_estado(self, hr_luces):
-        # El PLC ahora dictamina el color de las luces.
-        # hr_luces = 1 -> Rojo (Inundación Crítica)
-        # hr_luces = 2 -> Naranja (Alerta Límite)
-        # Otro valor -> Azul Normal
-        if hr_luces == 1:
-            self.animador_tiras.color_t1 = (255, 0, 0)
-            self.animador_tiras.color_t2 = (255, 0, 0)
-            self.animador_tiras.velocidad_ms = 20
-        elif hr_luces == 2:
-            self.animador_tiras.color_t1 = (255, 140, 0)
-            self.animador_tiras.color_t2 = (255, 140, 0)
-            self.animador_tiras.velocidad_ms = 40
-        else:
-            self.animador_tiras.color_t1 = (0, 0, 255)
-            self.animador_tiras.color_t2 = (255, 255, 255)
-            self.animador_tiras.velocidad_ms = 60
+    def _actualizar_luces_estado(self, nivel_maximo):
+        # 1. Tira 1 (Lógica de Agua/CTF)
+        color_t1 = getattr(self, 'color_tira1_override', (0, 0, 255)) 
+        if nivel_maximo >= 100.0 or self.estado in ["INUNDACION_CRITICA", "PARADA_FORZADA"]:
+            color_t1 = (255, 0, 0)
+        elif nivel_maximo >= self.limite_seguridad_pct or self.estado == "LIMITE_ALCANZADO":
+            color_t1 = (255, 140, 0)
+            
+        # 2. Tira 2 (Edificios/Casas, completamente libre)
+        color_t2 = getattr(self, 'color_tira2_override', (255, 255, 255))
+        
+        self.animador_tiras.color_t1 = color_t1
+        self.animador_tiras.color_t2 = color_t2
+        self.animador_tiras.velocidad_ms = getattr(self, 'velocidad_tiras_override', 60)
 
     def _bucle_control(self):
         while self.corriendo:
             try:
-                # Actualiza la maqueta visual/simulada (solo estética)
-                self.hw.actualizar_simulacion(getattr(self, '_estado_bombas_local', False))
-                
-                # 1. LEER SENSORES FÍSICOS (Sin tomar decisiones)
+                self.hw.actualizar_simulacion(self.bombas_activas)
                 niveles_pct = self.hw.leer_niveles_pct()
+                nivel_maximo = max(niveles_pct) if niveles_pct else 0.0
 
-                # Forzar apertura de conexión TCP si estaba cerrada
-                if not self.cliente.is_open:
-                    self.cliente.open()
+                ignorar_plc = getattr(self, 'ignorar_plc', False)
 
-                if self.cliente.is_open:
-                    # 2. ESCRIBIR SENSORES AL PLC (Ojos del PLC)
-                    if len(niveles_pct) == 4:
-                        # Escribimos en HR 21, 22, 23 y 24 (escalados x10 para mantener decimales)
-                        self.cliente.write_multiple_registers(21, [int(n * 10) for n in niveles_pct])
-                        # Escribimos un latido (Watchdog) en HR 25 para que el PLC sepa que estamos vivos
-                        latido = int(time.time()) % 65535
-                        self.cliente.write_single_register(25, latido)
+                if self.cliente.is_open or ignorar_plc:
+                    if self.cliente.is_open and len(niveles_pct) == 4:
+                        self.cliente.write_multiple_registers(17, [int(n * 10) for n in niveles_pct])
 
-                    # 3. LEER ORDENES DEL PLC (Cerebro externo)
-                    # Leemos HR 0 (Comandos de Bombas) y HR 1 (Comandos de Luces)
-                    regs = self.cliente.read_holding_registers(0, 2)
-                    if regs:
-                        hr_estado_bombas = regs[0]
-                        hr_estado_luces = regs[1]
+                    if self.cliente.is_open:
+                        regs = self.cliente.read_holding_registers(0, 1)
+                        sensor_bypassed = (regs and regs[0] == 768)
+                    else:
+                        sensor_bypassed = getattr(self, 'ataque_simulado', False)
 
-                        # Extraemos el Bit 9 (512) para encender las bombas
-                        encender_bombas = bool((hr_estado_bombas >> 9) & 1)
-                        self.hw.set_bombas(encender_bombas)
-                        self._estado_bombas_local = encender_bombas
+                    if getattr(self, 'forzar_parada', False):
+                        self.bombas_activas = False
+                        self.estado = "PARADA_FORZADA"
+                    elif self.bombas_activas:
+                        if not sensor_bypassed:
+                            if nivel_maximo >= self.limite_seguridad_pct:
+                                if hasattr(self, '_tiempo_inund'): del self._tiempo_inund
+                                self.bombas_activas = False
+                                self.estado = "LIMITE_ALCANZADO"
+                            else:
+                                if hasattr(self, '_tiempo_inund'): del self._tiempo_inund
+                                self.estado = "LLENANDO"
+                        else:
+                            if nivel_maximo >= 100.0:
+                                self.estado = "INUNDACION_CRITICA"
+                                if not hasattr(self, '_tiempo_inund'):
+                                    self._tiempo_inund = time.time()
+                                elif time.time() - self._tiempo_inund >= 10.0:
+                                    if self.cliente.is_open:
+                                        self.cliente.write_single_register(0, 0)
+                                    else:
+                                        self.ataque_simulado = False
+                                        
+                                    self.bombas_activas = True
+                                    if not HARDWARE_REAL:
+                                        self.hw.override_niveles = None
+                                        self.hw.niveles_simulados = [25.0, 25.0, 25.0, 25.0]
+                                    del self._tiempo_inund
+                            elif nivel_maximo >= 98.0:
+                                self.estado = "INUNDACION_CRITICA"
+                            else:
+                                self.estado = "OVERRIDE_ACTIVO"
+                    else:
+                        if hasattr(self, '_tiempo_inund'): del self._tiempo_inund
+                        if nivel_maximo < (self.limite_seguridad_pct - 15.0) and not sensor_bypassed:
+                            self.bombas_activas = True
+                            self.estado = "LLENANDO"
+                        elif self.estado != "INUNDACION_CRITICA":
+                            if nivel_maximo >= self.limite_seguridad_pct:
+                                self.estado = "LIMITE_ALCANZADO"
+                            else:
+                                self.estado = "NORMAL"
 
-                        # Actualizamos las luces según lo dicte el PLC
-                        self._actualizar_luces_estado(hr_estado_luces)
+                    self.hw.set_bombas(self.bombas_activas)
+                    self._actualizar_luces_estado(nivel_maximo)
+
+                    if self.cliente.is_open:
+                        self.cliente.write_single_register(21, 1 if self.bombas_activas else 0)
+
                 else:
-                    # FAILSAFE: Si el PLC se desconecta, APAGAR TODO POR SEGURIDAD FÍSICA
                     self.hw.set_bombas(False)
-                    self._estado_bombas_local = False
-                    self.animador_tiras.color_t1 = (255, 0, 255) # Magenta de error de red
-                    self.animador_tiras.color_t2 = (255, 0, 255)
+                    # En fallback, forzamos animación a rojo
+                    self.animador_tiras.color_t1 = (255, 0, 0)
+                    self.animador_tiras.color_t2 = (255, 0, 0)
 
             except Exception as e:
-                logger.error(f"Error Modbus / Ciclo PLC: {e}")
+                pass
                 
-            time.sleep(0.3)
+            time.sleep(0.5)
 
     def detener(self):
         self.corriendo = False
@@ -373,6 +400,7 @@ class RtuHardwareGateway:
         if self.cliente.is_open:
             self.cliente.close()
         self.hw.limpiar()
+        self.hw.apagar_semaforos()
 
 if __name__ == "__main__":
     gateway = RtuHardwareGateway()

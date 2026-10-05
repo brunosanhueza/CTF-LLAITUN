@@ -179,12 +179,12 @@ def chat_interno():
     Revela la pista crítica para iniciar la Fase 2.
     """
     chats = [
-        {"de": "admin_scada", "para": "op_turno1", "fecha": "2026-09-29 14:02", 
-         "mensaje": "Oye, el nuevo sistema de diagnóstico plc_diagnostic ya está instalado en el servidor Debian interno (/usr/local/bin/)."},
-        {"de": "op_turno1", "para": "admin_scada", "fecha": "2026-09-29 14:05", 
+        {"de": "admin_scada", "para": "op_turno1", "fecha": "2026-10-02 14:02", 
+         "mensaje": "Oye, el nuevo sistema de diagnóstico ya está instalado en el servidor Debian corporativo."},
+        {"de": "op_turno1", "para": "admin_scada", "fecha": "2026-10-02 14:05", 
          "mensaje": "Recibido jefe. ¿Cómo me conecto si la VPN de mantenimiento sigue fallando?"},
-        {"de": "admin_scada", "para": "op_turno1", "fecha": "2026-09-29 14:10", 
-         "mensaje": "Te dejé la llave privada SSH (id_rsa) guardada temporalmente en este servidor web, en la carpeta uploads oculta. Usa el botón de descargas del portal si la necesitas urgente. El usuario del servidor Debian es operador_it."}
+        {"de": "admin_scada", "para": "op_turno1", "fecha": "2026-10-02 14:10", 
+         "mensaje": "Creé un respaldo de las credenciales de SSH en el archivo /var/backups/credenciales_ot.bak del servidor. Para que los bots no las lean, cifré el contenido del archivo con ROT47. Usa la herramienta de descargas del portal web para bajar el archivo si lo necesitas urgente."}
     ]
     return jsonify({"status": "Confidencial - Log de Comunicaciones", "data": chats})
 
