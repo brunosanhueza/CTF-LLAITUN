@@ -53,7 +53,7 @@ class HardwareManager:
         self.sensores = []
         self.leds = None
         self.canales_ws = []
-        self.n_leds_tira = 100
+        self.n_leds_tira = 120
         
         self.modo_manual_bombas = False
         self.estado_bombas = [False, False, False, False]
@@ -158,7 +158,8 @@ class HardwareManager:
                 
                 if len(self.canales_ws) > 0:
                     for i in range(self.n_leds_tira):
-                        if i % 25 == 24:
+                        # Separadores visuales: Bloques de 30 (25 LEDs encendidos, 5 apagados)
+                        if (i % 30) >= 25:
                             ws.ws2811_led_set(self.canales_ws[0], i, apagado)
                         else:
                             ws.ws2811_led_set(self.canales_ws[0], i, c1 if i < encendidos else apagado)
