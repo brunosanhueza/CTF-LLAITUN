@@ -303,6 +303,10 @@ class RtuHardwareGateway:
         self._contador_watchdog = 0
         self._estado_bombas_local = False
 
+        # Buffer para Promedio Móvil (Suavizado de Sensores)
+        self.historial_distancias = {0: [], 1: [], 2: [], 3: []}
+        self.max_muestras = 5
+
         # Mapa de colores del PLC (Flag 4)
         self.mapa_colores = {
             1: (255, 0, 0),     # Rojo
@@ -322,18 +326,15 @@ class RtuHardwareGateway:
             threading.Thread(target=self._bucle_control, daemon=True).start()
 
     def _actualizar_color_flag4(self, color_plc):
-        # Color_LED_Flag4 (HR10)
         if color_plc == 0:
-            # Vuelve a la animación azul de llenado
             self.animador_tiras.color_t1 = (0, 0, 255)
             self.animador_tiras.color_t2 = (255, 255, 255)
             self.animador_tiras.velocidad_ms = 60
         else:
-            # Toma el color del mapa o se queda blanco por defecto
             color_rgb = self.mapa_colores.get(color_plc, (255, 255, 255))
             self.animador_tiras.color_t1 = color_rgb
             self.animador_tiras.color_t2 = color_rgb
-            self.animador_tiras.velocidad_ms = 20 # Modo fiesta rápido
+            self.animador_tiras.velocidad_ms = 20
 
     def _bucle_control(self):
         while self.corriendo:
@@ -344,26 +345,32 @@ class RtuHardwareGateway:
                     self.cliente.open()
 
                 if self.cliente.is_open:
-                    # 1. ENVIAR LECTURAS CRUDAS (RAW en milímetros)
-                    # El hardware tiene 4 canales I2C fijos que mapean así:
-                    # ch0 -> P2, ch1 -> P4, ch2 -> P1, ch3 -> P3
-                    distancias = self.hw.leer_distancias_mm()
-                    if len(distancias) == 4:
-                        # HR 21 (P1)=ch2, HR 23 (P2)=ch0, HR 25 (P3)=ch3, HR 27 (P4)=ch1
-                        self.cliente.write_single_register(21, distancias[2])
-                        self.cliente.write_single_register(23, distancias[0])
-                        self.cliente.write_single_register(25, distancias[3])
-                        self.cliente.write_single_register(27, distancias[1])
-                        self.cliente.write_single_register(41, 0) # ErrCode = 0
-                    else:
-                        self.cliente.write_single_register(41, 1) # ErrCode = 1 (Fallo sensores)
+                    # 1. ENVIAR LECTURAS CRUDAS (Con Promedio Móvil)
+                    distancias_crudas = self.hw.leer_distancias_mm()
+                    if len(distancias_crudas) == 4:
+                        distancias_suavizadas = []
+                        for i in range(4):
+                            self.historial_distancias[i].append(distancias_crudas[i])
+                            if len(self.historial_distancias[i]) > self.max_muestras:
+                                self.historial_distancias[i].pop(0)
+                            
+                            promedio = int(sum(self.historial_distancias[i]) / len(self.historial_distancias[i]))
+                            distancias_suavizadas.append(promedio)
 
-                    # Watchdog (Latido de red hacia el PLC)
+                        # HR 21 (P1)=ch2, HR 23 (P2)=ch0, HR 25 (P3)=ch3, HR 27 (P4)=ch1
+                        self.cliente.write_single_register(21, distancias_suavizadas[2])
+                        self.cliente.write_single_register(23, distancias_suavizadas[0])
+                        self.cliente.write_single_register(25, distancias_suavizadas[3])
+                        self.cliente.write_single_register(27, distancias_suavizadas[1])
+                        self.cliente.write_single_register(41, 0)
+                    else:
+                        self.cliente.write_single_register(41, 1)
+
+                    # Watchdog
                     self._contador_watchdog = (self._contador_watchdog + 1) & 0xFFFF
                     self.cliente.write_single_register(40, self._contador_watchdog)
 
                     # 2. LEER COMANDOS DEL PLC
-                    # Leemos HR 0 (Comandos Bombas) y HR 10 (Color Tiras/Luminarias)
                     regs_bombas = self.cliente.read_holding_registers(0, 1)
                     regs_color = self.cliente.read_holding_registers(10, 1)
 
@@ -371,7 +378,6 @@ class RtuHardwareGateway:
                         hr_bombas = regs_bombas[0]
                         hr_color = regs_color[0]
 
-                        # Extraemos bits de comando: P1=9, P2=11, P3=13, P4=15
                         b1 = bool((hr_bombas >> 9) & 1)
                         b2 = bool((hr_bombas >> 11) & 1)
                         b3 = bool((hr_bombas >> 13) & 1)
@@ -384,21 +390,21 @@ class RtuHardwareGateway:
                         
                         self._estado_bombas_local = b1 or b2 or b3 or b4
 
-                        # Efecto Flag 4: Luminarias encendidas si HR10 != 0
                         self.hw.set_luminarias(hr_color != 0)
                         self._actualizar_color_flag4(hr_color)
                 else:
-                    # FAILSAFE: PLC DESCONECTADO
+                    # FAILSAFE
                     self.hw.set_bombas(False)
                     self.hw.set_luminarias(False)
                     self._estado_bombas_local = False
-                    self.animador_tiras.color_t1 = (255, 0, 255) # Magenta Failsafe
+                    self.animador_tiras.color_t1 = (255, 0, 255)
                     self.animador_tiras.color_t2 = (255, 0, 255)
 
             except Exception as e:
                 logger.error(f"Error Ciclo PLC: {e}")
                 
-            time.sleep(0.3)
+            # Disminuimos la velocidad de lectura a 1 segundo para evitar saturar el PLC y el I2C
+            time.sleep(1.0)
 
     def detener(self):
         self.corriendo = False
