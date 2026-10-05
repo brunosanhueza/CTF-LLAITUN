@@ -199,14 +199,16 @@ class HardwareManager:
                 if sensor:
                     try:
                         dist = sensor.range
-                        distancias.append(dist if dist <= 8000 else 0)
+                        # Si da más de 8000, asumimos fuera de rango
+                        distancias.append(dist if dist <= 8000 else 8190)
                     except Exception:
-                        distancias.append(0)
+                        # Si hay un error, 8190 evita que crea que está a 0mm (Lleno al 166%)
+                        distancias.append(8190)
                 else:
-                    distancias.append(0)
+                    distancias.append(8190)
             return distancias
         else:
-            return [200, 200, 200, 200]
+            return [50, 50, 50, 50]
 
     def actualizar_simulacion(self, bombas_activas):
         if not HARDWARE_REAL:
@@ -471,4 +473,5 @@ if __name__ == "__main__":
             time.sleep(1)
     except KeyboardInterrupt:
         gateway.detener()
+
 
