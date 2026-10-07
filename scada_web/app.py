@@ -217,11 +217,6 @@ def api_telemetria():
     return jsonify(scada_client.obtener_telemetria()), 200
 
 
-@app.route("/api/v1/reset", methods=["POST", "GET"])
-def api_reset():
-    # El web client podra enviar un comando por modbus para reiniciar
-    return jsonify({"status": "success", "message": "Comando de reset enviado."}), 200
-
 
 @socketio.on('connect')
 def handle_connect():
