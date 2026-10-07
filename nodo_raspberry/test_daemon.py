@@ -115,16 +115,18 @@ class HardwareManager:
                 #     except Exception:
                 #         self.sensores.append(None)
                 
-                # Agregamos None directamente al primer sensor (Canal 0)
-                self.sensores.append(None)
-                
-                # Inicializamos los otros tres (Estanques 2, 3 y 4) en los canales 1, 2 y 3
-                for canal in [1, 2, 3]:
-                    try:
-                        sensor = VL53L0X(self.mux[canal])
-                        self.sensores.append(sensor)
-                    except Exception:
+                # CODIGO MODIFICADO Y ADAPTADO DESDE C3-PLC: 
+                # El sensor del Estanque 1 (Canal 2, bornera J20) esta malo fisicamente y cuelga el I2C.
+                # Lo inicializaremos como None.
+                for canal in [0, 1, 2, 3]:
+                    if canal == 2:  # Estanque 1 roto
                         self.sensores.append(None)
+                    else:
+                        try:
+                            sensor = VL53L0X(self.mux[canal])
+                            self.sensores.append(sensor)
+                        except Exception:
+                            self.sensores.append(None)
             except Exception:
                 pass
         else:
@@ -439,10 +441,19 @@ class RtuHardwareGateway:
 
                         # HR 21 (P1)=ch2, HR 23 (P2)=ch0, HR 25 (P3)=ch3, HR 27 (P4)=ch1
                         # Mapeo segun mapa_sensores.py del cuadrante 3
-                        self.cliente.write_single_register(21, distancias_suavizadas[2])
-                        self.cliente.write_single_register(23, distancias_suavizadas[0])
-                        self.cliente.write_single_register(25, distancias_suavizadas[3])
-                        self.cliente.write_single_register(27, distancias_suavizadas[1])
+                        # Escribir lecturas a Modbus (RAW y PCT contiguos en un solo request, tal como exige C3-PLC)
+                        pct_p1 = int(self._calcular_pct_local(distancias_suavizadas[2]))
+                        pct_p2 = int(self._calcular_pct_local(distancias_suavizadas[0]))
+                        pct_p3 = int(self._calcular_pct_local(distancias_suavizadas[3]))
+                        pct_p4 = int(self._calcular_pct_local(distancias_suavizadas[1]))
+                        
+                        registros_sensores = [
+                            distancias_suavizadas[2], pct_p1,  # HR 21 (RAW), HR 22 (PCT)
+                            distancias_suavizadas[0], pct_p2,  # HR 23 (RAW), HR 24 (PCT)
+                            distancias_suavizadas[3], pct_p3,  # HR 25 (RAW), HR 26 (PCT)
+                            distancias_suavizadas[1], pct_p4   # HR 27 (RAW), HR 28 (PCT)
+                        ]
+                        self.cliente.write_multiple_registers(21, registros_sensores)
                         self.cliente.write_single_register(41, 0)
                     else:
                         self.cliente.write_single_register(41, 1)
