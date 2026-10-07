@@ -1,4 +1,4 @@
-
+﻿
 document.addEventListener('DOMContentLoaded', () => {
     const socket = io();
 
@@ -113,7 +113,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function actualizarEstadoGlobal(estado, maxNivel) {
         if(!systemStateTag) return;
-        if (estado === 'INUNDACION_CRITICA' || maxNivel >= 98.0) {
+        if (estado === 'ERROR') {
+            systemStateTag.innerText = 'OFFLINE / NO LINK';
+            systemStateTag.className = 'value neutral';
+        } else if (estado === 'INUNDACION_CRITICA' || maxNivel >= 98.0) {
             systemStateTag.innerText = 'CRÍTICO / OVERFLOW';
             systemStateTag.className = 'value red';
         } else if (estado === 'OVERRIDE_ACTIVO') {

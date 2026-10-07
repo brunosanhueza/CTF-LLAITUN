@@ -186,7 +186,7 @@ def chat_interno():
         {"de": "op_turno1", "para": "admin_scada", "fecha": "2026-10-02 14:05", 
          "mensaje": "Recibido jefe. ¿Cómo me conecto si la VPN de mantenimiento sigue fallando?"},
         {"de": "admin_scada", "para": "op_turno1", "fecha": "2026-10-02 14:10", 
-         "mensaje": "Creé un respaldo de las credenciales de SSH en el archivo /var/backups/credenciales_ot.bak del servidor. Para que los bots no las lean, cifré el contenido del archivo con ROT47. Usa la herramienta de descargas del portal web para bajar el archivo si lo necesitas urgente."}
+         "mensaje": "Por seguridad cambié la contraseña del operador IT en el servidor. Te la dejo codificada en base64 para que no quede en texto plano: Q2lCM1IxQWJ7MFAzUjRET1IyMDI2XzY3fQ=="}
     ]
     html = """
     <html>

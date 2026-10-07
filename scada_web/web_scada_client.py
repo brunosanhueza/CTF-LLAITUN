@@ -1,4 +1,4 @@
-import time
+﻿import time
 import threading
 import os
 from pyModbusTCP.client import ModbusClient
@@ -68,7 +68,9 @@ class WebScadaClient:
                         self._telemetria["mensaje"] = "Lecturas nominales."
                 else:
                     self._telemetria["estado"] = "ERROR"
-                    self._telemetria["mensaje"] = "Sin conexin al PLC Modbus."
+                    self._telemetria["mensaje"] = "Sin conexión al PLC Modbus."
+                    self._telemetria["estanques"] = [0.0, 0.0, 0.0, 0.0]
+                    self._telemetria["bomba_activa"] = False
 
                 self.socketio.emit("telemetria", self._telemetria)
             except Exception as e:
