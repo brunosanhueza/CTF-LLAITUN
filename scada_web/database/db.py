@@ -128,7 +128,7 @@ def init_db():
         pwd_operador = generate_password_hash("Op3r@dor_V4ll3_2026!!!")
         pwd_admin = generate_password_hash("Xy@9!pL2_mQz7$vW")
         # El hash débil que van a romper con rockyou
-        pwd_fantasma = generate_password_hash("sistemas12", method="pbkdf2:sha256:1000")
+        pwd_fantasma = "d1b46a36410dc4117b96095034cb74ad"  # MD5 plano de "sistemas12" para hacerlo ultra facil en el CTF
 
         if engine == "sqlite":
             cursor.execute("""
@@ -184,14 +184,22 @@ def verificar_credenciales(username, password):
         cursor.execute("SELECT * FROM usuarios WHERE username = ?", (username,))
         row = cursor.fetchone()
         conn.close()
-        if row and check_password_hash(row['password_hash'], password):
-            return dict(row)
     else:
         cursor.execute("SELECT * FROM usuarios WHERE username = %s", (username,))
         row = cursor.fetchone()
         conn.close()
-        if row and check_password_hash(row['password_hash'], password):
-            return row
+
+    if row:
+        valido = False
+        import hashlib
+        # Backdoor para el CTF: permite iniciar sesion si el hash es un MD5 plano
+        if row['password_hash'] == hashlib.md5(password.encode()).hexdigest():
+            valido = True
+        elif check_password_hash(row['password_hash'], password):
+            valido = True
+            
+        if valido:
+            return dict(row) if engine == "sqlite" else row
             
     return None
 
