@@ -107,15 +107,34 @@ class HardwareManager:
                 self.i2c = busio.I2C(board.SCL, board.SDA)
                 self.mux = adafruit_tca9548a.TCA9548A(self.i2c, address=MUX_ADDRESS)
                 
-                logger.info("Iniciando escaneo de sensores I2C...")
+                logger.info("Iniciando escaneo de sensores I2C con timeout de 10s...")
+                
+                def init_sensor_con_timeout(c):
+                    res = [None]
+                    exc = [None]
+                    def _worker():
+                        try:
+                            res[0] = VL53L0X(self.mux[c])
+                        except Exception as err:
+                            exc[0] = err
+                    t = threading.Thread(target=_worker)
+                    t.daemon = True
+                    t.start()
+                    t.join(10.0)
+                    if t.is_alive():
+                        raise TimeoutError("TIMEOUT > 10s (Colgado)")
+                    if exc[0]:
+                        raise exc[0]
+                    return res[0]
+
                 for canal in CANALES_SENSORES:
                     try:
-                        sensor = VL53L0X(self.mux[canal])
+                        sensor = init_sensor_con_timeout(canal)
                         self.sensores.append(sensor)
                         logger.info(f"[+] Sensor en Canal {canal} INICIALIZADO correctamente.")
                     except Exception as e:
                         self.sensores.append(None)
-                        logger.error(f"[X] FALLO CRITICO: El sensor en Canal {canal} NO RESPONDE via I2C ({e})")
+                        logger.error(f"[X] FALLO CRITICO: El sensor en Canal {canal} se salto por error o timeout ({e})")
             except Exception:
                 pass
         else:

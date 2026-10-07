@@ -118,19 +118,38 @@ class HardwareManager:
                 # CODIGO MODIFICADO Y ADAPTADO DESDE C3-PLC: 
                 # El sensor del Estanque 1 (Canal 2, bornera J20) esta malo fisicamente y cuelga el I2C.
                 # Lo inicializaremos como None.
-                logger.info("Iniciando escaneo de sensores I2C (Modo Test - Bypass Canal 2)...")
+                logger.info("Iniciando escaneo de sensores I2C con timeout de 10s (Modo Test - Bypass Canal 2)...")
+                
+                def init_sensor_con_timeout(c):
+                    res = [None]
+                    exc = [None]
+                    def _worker():
+                        try:
+                            res[0] = VL53L0X(self.mux[c])
+                        except Exception as err:
+                            exc[0] = err
+                    t = threading.Thread(target=_worker)
+                    t.daemon = True
+                    t.start()
+                    t.join(10.0)
+                    if t.is_alive():
+                        raise TimeoutError("TIMEOUT > 10s (Colgado)")
+                    if exc[0]:
+                        raise exc[0]
+                    return res[0]
+
                 for canal in [0, 1, 2, 3]:
                     if canal == 2:  # Estanque 1 roto
                         self.sensores.append(None)
                         logger.warning(f"[-] Canal {canal} IGNORADO intencionalmente por bypass.")
                     else:
                         try:
-                            sensor = VL53L0X(self.mux[canal])
+                            sensor = init_sensor_con_timeout(canal)
                             self.sensores.append(sensor)
                             logger.info(f"[+] Sensor en Canal {canal} INICIALIZADO correctamente.")
                         except Exception as e:
                             self.sensores.append(None)
-                            logger.error(f"[X] FALLO CRITICO: El sensor en Canal {canal} NO RESPONDE via I2C ({e})")
+                            logger.error(f"[X] FALLO CRITICO: El sensor en Canal {canal} se salto por error o timeout ({e})")
             except Exception:
                 pass
         else:
