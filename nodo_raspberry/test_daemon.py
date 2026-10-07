@@ -107,7 +107,19 @@ class HardwareManager:
                 self.i2c = busio.I2C(board.SCL, board.SDA)
                 self.mux = adafruit_tca9548a.TCA9548A(self.i2c, address=MUX_ADDRESS)
                 
-                for canal in CANALES_SENSORES:
+                # CODIGO MODIFICADO: EL SENSOR DEL ESTANQUE 1 ESTA MALO Y CUELGA EL I2C. LO SALTAMOS
+                # for canal in CANALES_SENSORES:
+                #     try:
+                #         sensor = VL53L0X(self.mux[canal])
+                #         self.sensores.append(sensor)
+                #     except Exception:
+                #         self.sensores.append(None)
+                
+                # Agregamos None directamente al primer sensor (Canal 0)
+                self.sensores.append(None)
+                
+                # Inicializamos los otros tres (Estanques 2, 3 y 4) en los canales 1, 2 y 3
+                for canal in [1, 2, 3]:
                     try:
                         sensor = VL53L0X(self.mux[canal])
                         self.sensores.append(sensor)
