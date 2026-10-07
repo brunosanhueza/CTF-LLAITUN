@@ -32,7 +32,7 @@ El entorno se divide en tres zonas separadas por el firewall (pfSense):
 ### 🟡 FASE 2: Fuzzing y Path Traversal (Robo LFI)
 *   **Origen:** Atacante (WAN)
 *   **Destino:** Debian Host -> `scada_web` (Puerto 5000)
-*   **Acción:** El atacante hace fuzzing y descubre la ruta oculta `/internal/messages` (pista). Luego, lanza un ataque LFI hacia `/intranet/download?file=...` para leer el archivo interno del contenedor `/var/backups/credenciales_ot.bak`.
+*   **Acción:** El atacante hace fuzzing y descubre la ruta oculta `/api/v1/messages` (pista). Luego, lanza un ataque LFI hacia `/intranet/download?file=...` para leer el archivo interno del contenedor `/var/backups/credenciales_ot.bak`.
 *   **Loot:** Descifra el contenido (ROT47) para obtener la **[FLAG 1]** y las credenciales SSH válidas para el sistema operativo.
 
 ### 🟠 FASE 3: Salto Lateral y Escalada (Pivote de Red)

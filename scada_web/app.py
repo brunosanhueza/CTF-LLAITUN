@@ -1,4 +1,4 @@
-﻿import os
+import os
 import time
 from functools import wraps
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session, flash
@@ -158,13 +158,7 @@ def download_file():
 @app.route("/admin")
 @admin_required
 def admin_panel():
-    # El "Trofeo de Vuelta": Solo el admin real (o alguien que forzó su hash) verá la Flag.
-    # Esta parte de Python es la que quedará cifrada/ofuscada después con PyArmor o Cython.
-    part1 = "CtF_L1@I7uN"
-    part2 = "{paS5!!_1lAItuN_@GuA}"
-    flag_secreta = part1 + part2
-    
-    return render_template("admin.html", usuario=session, secret_admin_flag=flag_secreta)
+    return render_template("admin.html", usuario=session)
 
 @app.route("/api/v1/search")
 def api_search():
@@ -173,7 +167,7 @@ def api_search():
     resultados = buscar_operador(q) if q else []
     return jsonify(resultados)
 
-@app.route("/internal/messages")
+@app.route("/api/v1/messages")
 @login_required
 def chat_interno():
     """

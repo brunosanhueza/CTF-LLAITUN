@@ -30,8 +30,8 @@ Esta es la ruta lógica exacta que un jugador debe seguir para hilar las vulnera
 ## 📂 Fase 2: Fuzzing y Exfiltración LFI (El Pivote al Sistema Operativo)
 1. **El Bloqueo:** Ya logueados en `/intranet`, la cuenta `testing` no tiene permisos administrativos. No hay botones de "Hackear Planta". Necesitan escalar.
 2. **Fuzzing de Directorios:** Como buenos atacantes, usan `Dirb`, `Gobuster` o `Feroxbuster` contra la URL para buscar rutas ocultas.
-3. **La Pista (Miga de Pan):** El fuzzer descubre una ruta oculta: `/internal/messages`.
-4. **Lectura de la Pista:** Al entrar a `/internal/messages`, ven un log antiguo de conversación. Un mensaje dice:
+3. **La Pista (Miga de Pan):** El fuzzer descubre una ruta oculta: `/api/v1/messages`.
+4. **Lectura de la Pista:** Al entrar a `/api/v1/messages`, ven un log antiguo de conversación. Un mensaje dice:
    > *"Oye, te dejé tu llave SSH (id_rsa) temporal tirada en la carpeta oculta /uploads por error. El usuario del servidor Debian es operador_it, bórrala cuando entres."*
 5. **El Ataque (LFI):** En el `/intranet` normal, hay una función para descargar bitácoras (ej. `/intranet/download?file=bitacora_1.pdf`). El jugador abusa de esta ruta inyectando un *Path Traversal* (Local File Inclusion):
    - Payload: `/intranet/download?file=../../uploads/id_rsa`

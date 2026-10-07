@@ -50,7 +50,7 @@ FASE 1: Infiltración Inicial y SQLi
 
 FASE 2: Fuzzing y Exfiltración LFI (Pivote IT)
 - Logueados como testing, la web no muestra botones útiles.
-- Hacen fuzzing de rutas (`dirb`, `gobuster` con `common.txt`) y descubren `/internal/messages`.
+- Hacen fuzzing de rutas (`dirb`, `gobuster` con `common.txt`) y descubren `/api/v1/messages`.
 - Leen un log de chat inventado donde el admin le dice al operador: *"Oye, te dejé tu llave SSH (id_rsa) tirada en la carpeta oculta /uploads. El usuario del servidor Debian es operador_it"*.
 - El jugador usa la vulnerabilidad de Local File Inclusion (LFI) existente en el portal para robársela: `/intranet/download?file=../../uploads/id_rsa`.
 
@@ -83,7 +83,7 @@ FASE 5: El "Trofeo de Vuelta" (Docker Pivot)
 - Hardware: Desacople de los semáforos a hilos automáticos independientes.
 - Vulnerabilidad de Sistema: Se eliminó el reto "demasiado difícil" del Buffer Overflow en C (`plc_diagnostic.c`) y se reemplazó por un vector realista de escalada de privilegios basado en malas configuraciones de sudo (`sudo -l`) y permisos de archivos (`setup_sudo_vuln.sh`).
 - BD (`db.py`): Limpieza de contraseñas harcodeadas. Se añadieron los nuevos usuarios y la ruta vulnerable `buscar_operador`.
-- Web (`app.py`): Inserción del endpoint `/api/v1/search`, endpoint `/internal/messages` (con los logs de pista) y preparación del render de la Flag en `/admin`.
+- Web (`app.py`): Inserción del endpoint `/api/v1/search`, endpoint `/api/v1/messages` (con los logs de pista) y preparación del render de la Flag en `/admin`.
 - UI (`login.html` & `admin.html`): Adición de la barra de búsqueda y el recuadro verde de la Flag.
 - CTF Design: Se diseñó el concepto del "Trofeo de Vuelta" y el bloqueo por permisos de Docker (evitando que root sea el fin del juego).
 
