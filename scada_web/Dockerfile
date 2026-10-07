@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # Dockerfile - AGUAS DEL VALLE S.A. (CTF Challenge Web Application)
 # ==============================================================================
 FROM python:3.11-slim
@@ -40,7 +40,7 @@ RUN chmod 444 /var/backups/credenciales_ot.bak
 # Crear usuario seguro sin privilegios
 RUN useradd -m -c "bG9zIHVzdWFyaW9zIGV4aXN0ZW4sIHBlcm8gbm8gZW4gZXN0ZSBwYXNzd2QgOyk=" -s /bin/bash operador_it && \
     useradd -m -s /bin/bash testing && \
-    useradd -m -u 1001 scadauser && \
+    useradd -m scadauser && \
     mkdir -p /app/uploads && \
     chown -R scadauser:scadauser /app
 
