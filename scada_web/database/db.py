@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sqlite3
 import logging
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -128,7 +128,7 @@ def init_db():
         pwd_operador = generate_password_hash("Op3r@dor_V4ll3_2026!!!")
         pwd_admin = generate_password_hash("Xy@9!pL2_mQz7$vW")
         # El hash débil que van a romper con rockyou
-        pwd_fantasma = generate_password_hash("sistemas12")
+        pwd_fantasma = generate_password_hash("sistemas12", method="pbkdf2:sha256:1000")
 
         if engine == "sqlite":
             cursor.execute("""
