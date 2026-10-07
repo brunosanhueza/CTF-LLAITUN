@@ -37,7 +37,7 @@ class WebScadaClient:
                 # HR 0: Comandos y Estado de Bombas (Bit 9 = Bomba 1)
                 # HR 21-24: Escalamiento_Sensores (Niveles estanques 1-4)
                 regs_estado = self.cliente.read_holding_registers(0, 1)
-                regs_niveles = self.cliente.read_holding_registers(21, 4)
+                regs_niveles = self.cliente.read_holding_registers(21, 8)
                 
                 if regs_estado is not None and regs_niveles is not None:
                     # Extraer el estado de la bomba del Bit 9 (512)
@@ -45,7 +45,8 @@ class WebScadaClient:
                     
                     # Calcular el Promedio Móvil para dar efecto de telemetría "En Vivo" sin saltos bruscos
                     for i in range(4):
-                        val_crudo = regs_niveles[i] / 10.0
+                        pct_values = [regs_niveles[1], regs_niveles[3], regs_niveles[5], regs_niveles[7]]
+                        val_crudo = pct_values[i] / 10.0
                         self.historial_niveles[i].append(val_crudo)
                         
                         # Mantener el buffer en el tamaño máximo

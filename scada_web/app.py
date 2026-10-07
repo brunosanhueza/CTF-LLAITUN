@@ -1,4 +1,4 @@
-import os
+﻿import os
 import time
 from functools import wraps
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session, flash
@@ -36,6 +36,8 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 init_db()
 scada_client = WebScadaClient(socketio)
+scada_client.iniciar()  # Added to start the PLC background polling
+
 
 
 def login_required(f):
@@ -186,7 +188,30 @@ def chat_interno():
         {"de": "admin_scada", "para": "op_turno1", "fecha": "2026-10-02 14:10", 
          "mensaje": "Creé un respaldo de las credenciales de SSH en el archivo /var/backups/credenciales_ot.bak del servidor. Para que los bots no las lean, cifré el contenido del archivo con ROT47. Usa la herramienta de descargas del portal web para bajar el archivo si lo necesitas urgente."}
     ]
-    return jsonify({"status": "Confidencial - Log de Comunicaciones", "data": chats})
+    html = """
+    <html>
+    <head><title>Foro Interno - IT & SCADA</title>
+    <style>
+        body { background-color: #c0c0c0; color: #000; font-family: "Times New Roman", Times, serif; }
+        .post { border: 1px solid #000; margin-bottom: 10px; padding: 5px; background: #e0e0e0; }
+        .header { background: #000080; color: #fff; padding: 2px; font-weight: bold; }
+    </style>
+    </head>
+    <body>
+    <h1>Foro de Comunicaciones Internas</h1>
+    <hr>
+    """
+    
+    for c in chats:
+        html += f"""
+        <div class="post">
+            <div class="header">De: {c['de']} | Para: {c['para']} | Fecha: {c['fecha']}</div>
+            <p>{c['mensaje']}</p>
+        </div>
+        """
+    html += "</body></html>"
+    
+    return html
 
 @app.route("/dashboard")
 def dashboard():
