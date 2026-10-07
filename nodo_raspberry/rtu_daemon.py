@@ -107,12 +107,15 @@ class HardwareManager:
                 self.i2c = busio.I2C(board.SCL, board.SDA)
                 self.mux = adafruit_tca9548a.TCA9548A(self.i2c, address=MUX_ADDRESS)
                 
+                logger.info("Iniciando escaneo de sensores I2C...")
                 for canal in CANALES_SENSORES:
                     try:
                         sensor = VL53L0X(self.mux[canal])
                         self.sensores.append(sensor)
-                    except Exception:
+                        logger.info(f"[+] Sensor en Canal {canal} INICIALIZADO correctamente.")
+                    except Exception as e:
                         self.sensores.append(None)
+                        logger.error(f"[X] FALLO CRITICO: El sensor en Canal {canal} NO RESPONDE via I2C ({e})")
             except Exception:
                 pass
         else:
@@ -381,14 +384,19 @@ class RtuHardwareGateway:
             self.animador_tiras.velocidad_ms = 20
 
     def _bucle_control(self):
+        loop_counter = 0
         while self.corriendo:
             try:
                 self.hw.actualizar_simulacion(self._estado_bombas_local)
                 
                 if not self.cliente.is_open:
+                    logger.warning("Intentando conectar al PLC Modbus en %s:%s...", self.plc_ip, self.plc_port)
                     self.cliente.open()
 
                 if self.cliente.is_open:
+                    loop_counter += 1
+                    if loop_counter % 5 == 0:  # Imprimir cada 5 segundos para no saturar la pantalla
+                        logger.info("Conectado al PLC. Enviando telemetria y leyendo comandos...")
                     # 1. ENVIAR LECTURAS CRUDAS (Con Promedio Movil)
                     distancias_crudas = self.hw.leer_distancias_mm()
                     max_pct_calculado = 0.0
@@ -427,10 +435,19 @@ class RtuHardwareGateway:
 
                         # HR 21 (P1)=ch2, HR 23 (P2)=ch0, HR 25 (P3)=ch3, HR 27 (P4)=ch1
                         # Mapeo segun mapa_sensores.py del cuadrante 3
-                        self.cliente.write_single_register(21, distancias_suavizadas[2])
-                        self.cliente.write_single_register(23, distancias_suavizadas[0])
-                        self.cliente.write_single_register(25, distancias_suavizadas[3])
-                        self.cliente.write_single_register(27, distancias_suavizadas[1])
+                        # Escribir lecturas a Modbus (RAW y PCT contiguos en un solo request, adaptado desde C3-PLC)
+                        pct_p1 = int(self._calcular_pct_local(distancias_suavizadas[2]))
+                        pct_p2 = int(self._calcular_pct_local(distancias_suavizadas[0]))
+                        pct_p3 = int(self._calcular_pct_local(distancias_suavizadas[3]))
+                        pct_p4 = int(self._calcular_pct_local(distancias_suavizadas[1]))
+                        
+                        registros_sensores = [
+                            distancias_suavizadas[2], pct_p1,  # HR 21 (RAW), HR 22 (PCT)
+                            distancias_suavizadas[0], pct_p2,  # HR 23 (RAW), HR 24 (PCT)
+                            distancias_suavizadas[3], pct_p3,  # HR 25 (RAW), HR 26 (PCT)
+                            distancias_suavizadas[1], pct_p4   # HR 27 (RAW), HR 28 (PCT)
+                        ]
+                        self.cliente.write_multiple_registers(21, registros_sensores)
                         self.cliente.write_single_register(41, 0)
                     else:
                         self.cliente.write_single_register(41, 1)

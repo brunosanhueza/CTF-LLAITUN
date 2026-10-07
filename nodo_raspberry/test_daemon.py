@@ -118,15 +118,19 @@ class HardwareManager:
                 # CODIGO MODIFICADO Y ADAPTADO DESDE C3-PLC: 
                 # El sensor del Estanque 1 (Canal 2, bornera J20) esta malo fisicamente y cuelga el I2C.
                 # Lo inicializaremos como None.
+                logger.info("Iniciando escaneo de sensores I2C (Modo Test - Bypass Canal 2)...")
                 for canal in [0, 1, 2, 3]:
                     if canal == 2:  # Estanque 1 roto
                         self.sensores.append(None)
+                        logger.warning(f"[-] Canal {canal} IGNORADO intencionalmente por bypass.")
                     else:
                         try:
                             sensor = VL53L0X(self.mux[canal])
                             self.sensores.append(sensor)
-                        except Exception:
+                            logger.info(f"[+] Sensor en Canal {canal} INICIALIZADO correctamente.")
+                        except Exception as e:
                             self.sensores.append(None)
+                            logger.error(f"[X] FALLO CRITICO: El sensor en Canal {canal} NO RESPONDE via I2C ({e})")
             except Exception:
                 pass
         else:
@@ -395,14 +399,19 @@ class RtuHardwareGateway:
             self.animador_tiras.velocidad_ms = 20
 
     def _bucle_control(self):
+        loop_counter = 0
         while self.corriendo:
             try:
                 self.hw.actualizar_simulacion(self._estado_bombas_local)
                 
                 if not self.cliente.is_open:
+                    logger.warning("Intentando conectar al PLC Modbus en %s:%s...", self.plc_ip, self.plc_port)
                     self.cliente.open()
 
                 if self.cliente.is_open:
+                    loop_counter += 1
+                    if loop_counter % 5 == 0:  # Imprimir cada 5 segundos para no saturar la pantalla
+                        logger.info("Conectado al PLC. Enviando telemetria y leyendo comandos...")
                     # 1. ENVIAR LECTURAS CRUDAS (Con Promedio Movil)
                     distancias_crudas = self.hw.leer_distancias_mm()
                     max_pct_calculado = 0.0
