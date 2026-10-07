@@ -22,7 +22,8 @@ class WebScadaClient:
             "sensor_bypassed": False,
             "estado": "NORMAL",
             "mensaje": "Conectando al PLC...",
-            "rele": {"estado": False}
+            "rele": {"estado": False},
+            "plc_ip": self.target_ip
         }
 
     def iniciar(self):
