@@ -1,0 +1,38 @@
+========================================================================
+RESUMEN DE CONTEXTO TÉCNICO V2 - PROYECTO CTF "AGUAS DEL VALLE" (SCADA)
+========================================================================
+
+OBJETIVO DEL PROYECTO:
+Es un entorno CTF (Capture The Flag) que simula un sistema SCADA industrial físico (bombas de agua, PLC por Modbus TCP, interfaz web y Raspberry Pi). Los competidores deben vulnerar la web, saltar al servidor host (Linux) y tomar control del PLC físico para provocar un desbordamiento (inundación).
+
+1. ARQUITECTURA Y DESPLIEGUE (DOCKER)
+------------------------------------------------------------------------
+- La aplicación web (`scada_web`) ahora está completamente dockerizada.
+- Se configuró un `docker-compose.yml` con dos contenedores:
+  - `scada-web`: La app en Flask conectada por WebSocket al Frontend.
+  - `db`: Una base de datos MySQL aislada internamente.
+- Se creó el script `deploy.sh` que automatiza todo el proceso: purga contenedores, limpia imágenes y volúmenes antiguos (`docker-compose down -v`), y reconstruye el entorno en limpio.
+
+2. CÓDIGO BACKEND & PLC (Modbus)
+------------------------------------------------------------------------
+- Se reparó el `app.py` añadiendo `scada_client.iniciar()` para revivir el hilo en segundo plano que consulta al PLC en tiempo real.
+- En `web_scada_client.py` se arregló el offset de memoria Modbus. El servidor ahora lee un bloque mayor (`HR 21 a 28`) para obtener los porcentajes pre-escalados directamente del PLC, extraídos de los índices impares del array.
+- Se implementó tolerancia a fallos: Si el PLC se desconecta, la telemetría baja las barras de agua a cero absoluto y el frontend UI (`dashboard.js`) marca un estado crítico de "OFFLINE / NO LINK".
+- Dinamismo en UI: La IP del objetivo Modbus (`10.10.30.100:502`) ahora es empujada dinámicamente desde el backend al dashboard para evitar que quede quemada ("hardcodeada") de forma errónea en el HTML.
+
+3. VULNERABILIDADES INYECTADAS Y NARRATIVA (KILLCHAIN)
+------------------------------------------------------------------------
+Paso 1: Reconocimiento. En el `/login`, se agregó un "easter egg" visual ("happY HAck1Ng!!").
+Paso 2: SQL Injection. Al extraer la base de datos, los atacantes encuentran 3 usuarios. 
+   - `admin_scada` y `op_turno1` están hasheados con `scrypt` (incrackeables).
+   - `testing` tiene su contraseña guardada en texto plano como **MD5 puro** (`d1b46a36410dc4117b96095034cb74ad` = "sistemas12"). La función `verificar_credenciales` en `db.py` fue modificada a nivel de código para que Flask permita el inicio de sesión usando este MD5 plano.
+Paso 3: DirBuster. Descubren el endpoint oculto `/internal/messages`. Este fue reescrito de JSON a un HTML asqueroso estilo años 90. Allí el administrador revela que la contraseña SSH está codificada en **Base64**: `Q2lCM1IxQWJ7MFAzUjRET1IyMDI2XzY3fQ==` (Texto plano y flag real: `CiB3R1Ab{0P3R4DOR2026_67}`).
+Paso 4: Local File Inclusion (LFI). Mediante `/intranet/download?file=../../../../etc/passwd`, leen el sistema de archivos.
+Paso 5: La Trampa Psicológica (El Dockerfile). En el `Dockerfile`, inyectamos los usuarios de Linux `testing` y `operador_it`. 
+   - Que exista `testing` en el OS le confirma al atacante que hay paridad entre los usuarios Web y los usuarios Linux.
+   - Al usuario `operador_it` se le inyectó un mensaje en su campo GECOS cifrado en **Base64** (`bG9zIHVzdWFyaW9zIGV4aXN0ZW4sIHBlcm8gbm8gZW4gZXN0ZSBwYXNzd2QgOyk=`). 
+   - Al decodificarlo, el mensaje dice: *"las cuentas existen, pero no en este passwd ;)"*. Esto les indica que están atrapados en el contenedor Docker y deben apuntar el ataque por SSH hacia la máquina host real de Linux.
+Paso 6: Root y Modbus. Acceden al Host vía SSH con `operador_it`, escalan a `root`, descubren el PLC en la red interna (`10.10.30.100:502`), inyectan telemetría falsa y todo el frontend reacciona marcando "CRÍTICO / OVERFLOW".
+
+ESTADO ACTUAL:
+El backend, el frontend, el despliegue automático y el diseño lógico del CTF Web-to-OT están 100% operativos y orquestados.
