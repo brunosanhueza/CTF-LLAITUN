@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sqlite3
 import logging
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -128,7 +128,7 @@ def init_db():
         pwd_operador = generate_password_hash("Op3r@dor_V4ll3_2026!!!")
         pwd_admin = generate_password_hash("Xy@9!pL2_mQz7$vW")
         # El hash débil que van a romper con rockyou
-        pwd_fantasma = "d1b46a36410dc4117b96095034cb74ad"  # MD5 plano de "sistemas12" para hacerlo ultra facil en el CTF
+        pwd_fantasma = "07fa19d0f01a5f507b88ba093140a65d"  # MD5 plano de "sistemas12" para hacerlo ultra facil en el CTF
 
         if engine == "sqlite":
             cursor.execute("""

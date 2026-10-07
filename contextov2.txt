@@ -25,7 +25,7 @@ Es un entorno CTF (Capture The Flag) que simula un sistema SCADA industrial fís
 Paso 1: Reconocimiento. En el `/login`, se agregó un "easter egg" visual ("happY HAck1Ng!!").
 Paso 2: SQL Injection. Al extraer la base de datos, los atacantes encuentran 3 usuarios. 
    - `admin_scada` y `op_turno1` están hasheados con `scrypt` (incrackeables).
-   - `testing` tiene su contraseña guardada en texto plano como **MD5 puro** (`d1b46a36410dc4117b96095034cb74ad` = "sistemas12"). La función `verificar_credenciales` en `db.py` fue modificada a nivel de código para que Flask permita el inicio de sesión usando este MD5 plano.
+   - `testing` tiene su contraseña guardada en texto plano como **MD5 puro** (`07fa19d0f01a5f507b88ba093140a65d` = "sistemas12"). La función `verificar_credenciales` en `db.py` fue modificada a nivel de código para que Flask permita el inicio de sesión usando este MD5 plano.
 Paso 3: DirBuster. Descubren el endpoint oculto `/internal/messages`. Este fue reescrito de JSON a un HTML asqueroso estilo años 90. Allí el administrador revela que la contraseña SSH está codificada en **Base64**: `Q2lCM1IxQWJ7MFAzUjRET1IyMDI2XzY3fQ==` (Texto plano y flag real: `CiB3R1Ab{0P3R4DOR2026_67}`).
 Paso 4: Local File Inclusion (LFI). Mediante `/intranet/download?file=../../../../etc/passwd`, leen el sistema de archivos.
 Paso 5: La Trampa Psicológica (El Dockerfile). En el `Dockerfile`, inyectamos los usuarios de Linux `testing` y `operador_it`. 
