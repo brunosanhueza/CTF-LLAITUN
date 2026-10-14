@@ -19,7 +19,7 @@ import time
 from pyModbusTCP.client import ModbusClient
 
 # --- Config: ajustar aquí si cambia la IP del PLC ---
-PLC_IP = "10.10.30.100"
+PLC_IP = "10.10.30.103"
 PLC_PORT = 502
 
 # --- Mapa de registros (DB4 "CTF_ModBus") ---

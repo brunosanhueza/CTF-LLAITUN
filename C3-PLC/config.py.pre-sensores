@@ -299,7 +299,7 @@ T_APAGADAS_MIN_S, T_APAGADAS_MAX_S = 0.0, 900.0
 # registro Modbus. plc_bridge.py lo importa, igual que hal.py hace con los
 # pines de GPIO.
 
-PLC_IP = "10.10.30.100"        # Confirmado: responde ping desde la Pi y acepta
+PLC_IP = "10.10.30.103"        # Confirmado: responde ping desde la Pi y acepta
                                 # Modbus TCP en el 502. (10.10.70.100 era una IP
                                 # candidata antigua, ya descartada.)
 PLC_PUERTO = 502

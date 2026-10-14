@@ -9,7 +9,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      - PLC_HOST=10.10.30.100
+      - PLC_HOST=10.10.30.103
       - DB_TYPE=mysql
       - MYSQL_HOST=db
       - MYSQL_PORT=3306

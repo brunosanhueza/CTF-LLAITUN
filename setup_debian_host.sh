@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 
 # ==============================================================================
 # SCRIPT DE CONFIGURACIÓN DEL HOST DEBIAN (MÁQUINA VÍCTIMA)
@@ -28,13 +28,38 @@ chmod 0440 /etc/sudoers.d/operador_it
 # Docker (que pasa por la cadena FORWARD) no se verá afectado y seguirá funcionando.
 echo "[*] Aplicando reglas de firewall local (iptables)..."
 
-# Limpiar regla si ya existía para no duplicar
-iptables -D OUTPUT -p tcp -d 10.10.30.100 -m multiport --dports 80,102,502 -m owner ! --uid-owner 0 -j REJECT 2>/dev/null
+# Limpiar regla previa si ya existía para no duplicar
+iptables -D OUTPUT -d 10.10.30.103 -m owner ! --uid-owner 0 -j REJECT 2>/dev/null
 
-# Bloquear la salida a 10.10.30.100:502 si el dueño del proceso NO es root (UID 0)
-iptables -A OUTPUT -p tcp -d 10.10.30.100 -m multiport --dports 80,102,502 -m owner ! --uid-owner 0 -j REJECT
+# Bloqueo TOTAL hacia el PLC (10.10.30.103): Corta TCP (80, 102, 502), UDP e ICMP (Ping)
+# Ningún usuario sin privilegios puede ver ni interactuar con el PLC hasta ser root (UID 0)
+iptables -A OUTPUT -d 10.10.30.103 -m owner ! --uid-owner 0 -j REJECT
 
-# 4. Hacer que las reglas persistan tras un reinicio (Opcional pero recomendado)
+# 4. Ocultar el puerto 22 a herramientas de inspección (ss, netstat, lsof)
+# El servicio SSH sigue funcionando al 100%, pero no aparecerá en 'ss -tuln' ni 'netstat -tuln'
+# incluso si los comandos son ejecutados como root.
+echo "[*] Configurando camuflaje para ocultar el puerto 22 en la inspección local..."
+
+cat << 'EOF' > /usr/local/bin/ss
+#!/bin/bash
+real_ss="/usr/bin/ss"
+[ ! -f "$real_ss" ] && real_ss="/bin/ss"
+"$real_ss" "$@" | grep -vE '(:22\s|:ssh\s|\b22\b.*sshd)'
+EOF
+chmod 755 /usr/local/bin/ss
+
+if command -v netstat >/dev/null 2>&1; then
+    real_netstat=$(which netstat)
+    if [ "$real_netstat" != "/usr/local/bin/netstat" ]; then
+        cat << EOF > /usr/local/bin/netstat
+#!/bin/bash
+$real_netstat "\$@" | grep -vE '(:22\s|:ssh\s|\b22\b.*sshd)'
+EOF
+        chmod 755 /usr/local/bin/netstat
+    fi
+fi
+
+# 5. Hacer que las reglas persistan tras un reinicio (Opcional pero recomendado)
 echo "[*] Guardando reglas de iptables..."
 if command -v netfilter-persistent > /dev/null; then
     netfilter-persistent save
@@ -45,4 +70,5 @@ fi
 
 echo "[*] ¡Configuración del Host terminada con éxito!"
 echo "-> PrivEsc configurado: 'sudo gcc' habilitado para operador_it."
-echo "-> Red restringida: Solo 'root' y 'Docker' pueden hablar con el PLC."
+echo "-> Red restringida: Solo 'root' y 'Docker' pueden hablar con el PLC (10.10.30.103)."
+echo "-> Puerto 22 camuflado: SSH activo pero oculto en 'ss' y 'netstat' (incluso para root)."

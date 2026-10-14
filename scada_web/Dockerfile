@@ -5,7 +5,7 @@ FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     FLASK_ENV=production \
-    PLC_HOST=10.10.30.100 \
+    PLC_HOST=10.10.30.103 \
     DB_TYPE=mysql \
     MYSQL_HOST=host.docker.internal \
     MYSQL_PORT=3306 \

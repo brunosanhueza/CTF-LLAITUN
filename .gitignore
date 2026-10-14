@@ -1,0 +1,4 @@
+# Ignorar carpeta de contexto y archivos temporales
+moar_contexto/
+__pycache__/
+*.pyc

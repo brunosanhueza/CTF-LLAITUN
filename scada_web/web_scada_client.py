@@ -1,4 +1,4 @@
-﻿import time
+import time
 import threading
 import os
 from pyModbusTCP.client import ModbusClient
@@ -6,7 +6,7 @@ from pyModbusTCP.client import ModbusClient
 class WebScadaClient:
     def __init__(self, socketio, target_ip=None, target_port=502):
         self.socketio = socketio
-        self.target_ip = target_ip or os.environ.get("PLC_HOST", "10.10.30.100")
+        self.target_ip = target_ip or os.environ.get("PLC_HOST", "10.10.30.103")
         self.target_port = target_port
         self.cliente = ModbusClient(host=self.target_ip, port=self.target_port, auto_open=True, timeout=2.0)
         self.corriendo = False

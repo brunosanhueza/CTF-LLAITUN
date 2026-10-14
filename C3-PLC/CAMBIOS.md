@@ -44,7 +44,7 @@ El comentario del archivo se corrigio (decia "bits 0-7 confirmados"; se habia
 confirmado contra la tabla del DB, no contra lo que viaja por Modbus).
 
 ### 2. IP del PLC (`config.py`)
-`PLC_IP = "10.10.30.100"`. La Pi ya la tenia asi; la copia local tenia la
+`PLC_IP = "10.10.30.103"`. La Pi ya la tenia asi; la copia local tenia la
 antigua `10.10.70.100`.
 
 ### 3. Color de las tiras desde el PLC (`plc_bridge.py`, `config.py`)
@@ -160,7 +160,7 @@ que falta es saber en que estanque esta realmente cada sensor.
 
 ## Datos confirmados del sistema
 
-- Pi `10.10.30.102` (usuario `ciberlab-c3`). PLC `10.10.30.100`, puerto 502.
+- Pi `10.10.30.102` (usuario `ciberlab-c3`). PLC `10.10.30.103`, puerto 502.
 - El PLC admite UNA sola conexion Modbus a la vez: con `main.py` corriendo,
   cualquier otro cliente (scripts, `prueba_plc.py`) es rechazado.
 - Registros: HR0 estado/bombas (byte alto), HR10 `Color_LED_Flag4`,

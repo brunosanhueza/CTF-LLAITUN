@@ -18,7 +18,7 @@ Es un entorno CTF (Capture The Flag) que simula un sistema SCADA industrial fís
 - Se reparó el `app.py` añadiendo `scada_client.iniciar()` para revivir el hilo en segundo plano que consulta al PLC en tiempo real.
 - En `web_scada_client.py` se arregló el offset de memoria Modbus. El servidor ahora lee un bloque mayor (`HR 21 a 28`) para obtener los porcentajes pre-escalados directamente del PLC, extraídos de los índices impares del array.
 - Se implementó tolerancia a fallos: Si el PLC se desconecta, la telemetría baja las barras de agua a cero absoluto y el frontend UI (`dashboard.js`) marca un estado crítico de "OFFLINE / NO LINK".
-- Dinamismo en UI: La IP del objetivo Modbus (`10.10.30.100:502`) ahora es empujada dinámicamente desde el backend al dashboard para evitar que quede quemada ("hardcodeada") de forma errónea en el HTML.
+- Dinamismo en UI: La IP del objetivo Modbus (`10.10.30.103:502`) ahora es empujada dinámicamente desde el backend al dashboard para evitar que quede quemada ("hardcodeada") de forma errónea en el HTML.
 
 3. VULNERABILIDADES INYECTADAS Y NARRATIVA (KILLCHAIN)
 ------------------------------------------------------------------------
@@ -32,7 +32,7 @@ Paso 5: La Trampa Psicológica (El Dockerfile). En el `Dockerfile`, inyectamos l
    - Que exista `testing` en el OS le confirma al atacante que hay paridad entre los usuarios Web y los usuarios Linux.
    - Al usuario `operador_it` se le inyectó un mensaje en su campo GECOS cifrado en **Base64** (`bG9zIHVzdWFyaW9zIGV4aXN0ZW4sIHBlcm8gbm8gZW4gZXN0ZSBwYXNzd2QgOyk=`). 
    - Al decodificarlo, el mensaje dice: *"las cuentas existen, pero no en este passwd ;)"*. Esto les indica que están atrapados en el contenedor Docker y deben apuntar el ataque por SSH hacia la máquina host real de Linux.
-Paso 6: Root y Modbus. Acceden al Host vía SSH con `operador_it`, escalan a `root`, descubren el PLC en la red interna (`10.10.30.100:502`), inyectan telemetría falsa y todo el frontend reacciona marcando "CRÍTICO / OVERFLOW".
+Paso 6: Root y Modbus. Acceden al Host vía SSH con `operador_it`, escalan a `root`, descubren el PLC en la red interna (`10.10.30.103:502`), inyectan telemetría falsa y todo el frontend reacciona marcando "CRÍTICO / OVERFLOW".
 
 ESTADO ACTUAL:
 El backend, el frontend, el despliegue automático y el diseño lógico del CTF Web-to-OT están 100% operativos y orquestados.

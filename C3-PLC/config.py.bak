@@ -295,7 +295,7 @@ T_APAGADAS_MIN_S, T_APAGADAS_MAX_S = 0.0, 900.0
 # registro Modbus. plc_bridge.py lo importa, igual que hal.py hace con los
 # pines de GPIO.
 
-PLC_IP = "10.10.30.100"        # OJO: confirmar contra la IP real del PLC de
+PLC_IP = "10.10.30.103"        # OJO: confirmar contra la IP real del PLC de
                                 # laboratorio antes de la competencia (hay
                                 # discrepancia historica sin cerrar entre
                                 # varias IP candidatas - ver bitacora).

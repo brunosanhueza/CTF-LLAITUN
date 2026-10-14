@@ -2,7 +2,7 @@
 """
 DAEMON RTU - Sector 3 (CTF Aguas del Valle)
 Gestion de hardware local (Sensores I2C VL53L0X, Bombas, Luces, Semaforos)
-y comunicacion Modbus TCP con el PLC Siemens (10.10.30.100).
+y comunicacion Modbus TCP con el PLC Siemens (10.10.30.103).
 
 
 ARQUITECTURA DE RESILIENCIA (OPCIONES B & C):
@@ -558,7 +558,7 @@ class AnimadorSemaforos(threading.Thread):
 
 class RtuHardwareGateway:
     def __init__(self, skip_sensores: bool = False, bypass_canales: list = None):
-        self.plc_ip = os.environ.get("PLC_HOST", "10.10.30.100")
+        self.plc_ip = os.environ.get("PLC_HOST", "10.10.30.103")
         self.plc_port = int(os.environ.get("PLC_PORT", 502))
         
         self.cliente = ModbusClient(host=self.plc_ip, port=self.plc_port, auto_open=True, timeout=2.0)
@@ -571,7 +571,7 @@ class RtuHardwareGateway:
         self._estado_bombas_local = False
 
         self.historial_distancias = {0: [], 1: [], 2: [], 3: []}
-        self.max_muestras = 5
+        self.max_muestras = 2
         self.segundos_desbordados = {0: 0, 1: 0, 2: 0, 3: 0}
         self.map_alto = {0: 10, 1: 14, 2: 8, 3: 12}
 
@@ -726,12 +726,12 @@ class RtuHardwareGateway:
                     self.animador_tiras.color_t1 = (255, 0, 255)
                     self.animador_tiras.color_t2 = (255, 0, 255)
 
-                # Reporte por consola en el primer ciclo y luego cada 5 segundos
+                # Reporte por consola mas entendible y frecuente con barras de progreso
                 loop_counter += 1
-                if loop_counter == 1 or loop_counter % 5 == 0:
+                if loop_counter == 1 or loop_counter % 2 == 0:
                     ahora = time.strftime("%H:%M:%S")
                     print("\n" + "="*88)
-                    print(f"[*] DIAGNOSTICO Y TELEMETRIA EN TIEMPO REAL [{ahora}]")
+                    print(f"[*] TELEMETRIA Y PRUEBA DE SENSORES EN TIEMPO REAL [{ahora}]")
                     print("="*88)
 
                     orden_diagnostico = [
@@ -742,15 +742,25 @@ class RtuHardwareGateway:
                     ]
 
                     for ch, est, born, p, gpios, d, p_pct, b_st in orden_diagnostico:
-                        bomba_txt = "ENCENDIDA (ON)" if b_st else "APAGADA (OFF)"
-                        if self.hw.skip_sensores:
-                            est_txt = f"SIMULADO        | {d:4d} mm -> {p_pct:5.1f}%"
-                        elif self.hw.sensores[ch] is None or d >= 8000:
-                            est_txt = f"FALLO / NO MIDE | {d:4d} mm -> {0.0:5.1f}% [I2C Ch{ch} DAÑADO]"
-                        else:
-                            est_txt = f"MIDIENDO OK     | {d:4d} mm -> {p_pct:5.1f}% [I2C Ch{ch} ACTIVO]"
+                        bomba_txt = "ON " if b_st else "OFF"
+                        llenos = max(0, min(10, int(round((p_pct / 100.0) * 10))))
+                        barra_ascii = "#" * llenos + "." * (10 - llenos)
                         
-                        print(f" * {est} [Bornera {born} | Bomba {p} GPIO {gpios}]: {est_txt} | Bomba: {bomba_txt}")
+                        if p_pct >= 75:
+                            dedo_tag = ">>> [DEDO MUY CERCA!]"
+                        elif p_pct >= 30:
+                            dedo_tag = "    [OBSTACULO DETECTADO]"
+                        else:
+                            dedo_tag = "    [LIBRE / SIN DEDO]"
+
+                        if self.hw.skip_sensores:
+                            est_txt = f"SIMULADO  [{barra_ascii}] {p_pct:5.1f}% ({d:2d} mm) {dedo_tag}"
+                        elif self.hw.sensores[ch] is None or d >= 8000:
+                            est_txt = f"FALLO I2C [..........]   0.0% (--- mm) [DESCONECTADO / CH{ch}]"
+                        else:
+                            est_txt = f"MIDIENDO  [{barra_ascii}] {p_pct:5.1f}% ({d:2d} mm) {dedo_tag}"
+                        
+                        print(f" * {est:<11} ({born}|{p}): {est_txt} | Bomba: {bomba_txt}")
 
                     print("-"*88)
                     plc_status_str = "CONECTADO OK" if self.cliente.is_open else "DESCONECTADO (Reintentando...)"
@@ -812,7 +822,7 @@ def resolver_modo_sensores():
 
 if __name__ == "__main__":
     skip = resolver_modo_sensores()
-    bypass = []
+    bypass = [2]  # Por omision se omite el Canal 2 (J20 / Estanque 1) por sensor defectuoso (igual que en moar_contexto)
     
     for arg in sys.argv[1:]:
         if arg in ("--con-todos", "--enable-all"):
