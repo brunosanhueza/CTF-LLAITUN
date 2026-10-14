@@ -351,19 +351,13 @@ flowchart LR
 
 ## 🚀 8. GUÍA RÁPIDA DE DESPLIEGUE Y OPERACIÓN
 
-### Despliegue del Entorno Web SCADA (Debian Host)
+### Despliegue Unificado del Host y SCADA Web (Debian Host - Todo en uno)
 ```bash
 cd /home/debian-c3/delete-me/scada_web
 chmod +x deploy.sh
-./deploy.sh
+sudo ./deploy.sh
 ```
-
-### Configuración de Seguridad y PrivEsc en el Host (Root)
-```bash
-cd /home/debian-c3/delete-me
-chmod +x setup_debian_host.sh
-sudo ./setup_debian_host.sh
-```
+*(Este script único configura al usuario `operador_it`, la escalada `sudo gcc`, el bloqueo iptables a `10.10.30.103`, el camuflaje del puerto 22 y levanta los contenedores Docker).*
 
 ### Ejecución del Demonio Físico en Raspberry Pi
 ```bash
