@@ -30,8 +30,8 @@ CANALES_MAPA = [
 
 # Configuración de Geometría por Estanque
 GEOMETRIA_CANALES = {
-    0: (125, 20),   # Estanque 2 (J18, P2) - Vacio: 125mm, Lleno: 20mm
-    1: (45, 15),    # Estanque 4 (J19, P4) - Vacio: 45mm,  Lleno: 15mm
+    0: (128, 20),   # Estanque 2 (J18, P2) - Vacio: 128mm, Lleno: 20mm
+    1: (82, 15),    # Estanque 4 (J19, P4) - Vacio: 82mm,  Lleno: 15mm
     2: (150, 20),   # Estanque 1 (J20, P1) - Vacio: 150mm, Lleno: 20mm (Sensor dañado)
     3: (65, 20),    # Estanque 3 (J21, P3) - Vacio: 65mm,  Lleno: 20mm
 }
@@ -99,19 +99,30 @@ except Exception:
     HARDWARE_REAL = False
 
 
-def calcular_pct(dist_mm, canal=None):
-    """Convierte distancia en mm a porcentaje de nivel (0% a 100%) segun geometria del estanque."""
+def calcular_pct(dist_mm, canal=None, dist_base=None):
+    """Convierte distancia en mm a porcentaje de nivel (0% a 100%) segun geometria del estanque y auto-tara."""
     if dist_mm >= 8000 or dist_mm <= 0:
         return 0.0
-    if canal in GEOMETRIA_CANALES:
+    if dist_base is not None:
+        vacio = dist_base
+        if canal in GEOMETRIA_CANALES:
+            _, lleno = GEOMETRIA_CANALES[canal]
+        else:
+            lleno = DIST_LLENO_MM
+    elif canal in GEOMETRIA_CANALES:
         vacio, lleno = GEOMETRIA_CANALES[canal]
     else:
         vacio, lleno = DIST_VACIO_MM, DIST_LLENO_MM
-    if dist_mm >= vacio:
+
+    # Zona muerta de 2 mm contra ruido del sensor en reposo
+    if dist_mm >= (vacio - 2):
         return 0.0
     if dist_mm <= lleno:
         return 100.0
-    return max(0.0, min(100.0, ((vacio - dist_mm) / (vacio - lleno)) * 100.0))
+    rango = vacio - lleno
+    if rango <= 0:
+        return 0.0
+    return max(0.0, min(100.0, ((vacio - dist_mm) / rango) * 100.0))
 
 
 def generar_barra(pct, ancho=22):
@@ -135,8 +146,26 @@ def generar_barra(pct, ancho=22):
 
 def main():
     print(CLEAR_SCREEN, end="")
-    print(f"{BOLD}{CYAN}Iniciando Test Visual de Sensores...{RESET}")
+    print(f"{BOLD}{CYAN}Iniciando Test Visual de Sensores con Auto-Tara de Linea Base...{RESET}")
     time.sleep(0.4)
+
+    # Distancias base de reposo (Auto-Tara al iniciar)
+    distancias_base = {
+        0: GEOMETRIA_CANALES[0][0],  # 128 mm (Estanque 2)
+        1: GEOMETRIA_CANALES[1][0],  # 82 mm  (Estanque 4)
+        2: GEOMETRIA_CANALES[2][0],  # 150 mm (Estanque 1 / Bypass)
+        3: GEOMETRIA_CANALES[3][0],  # 65 mm  (Estanque 3)
+    }
+
+    if HARDWARE_REAL:
+        for c, s in sensores.items():
+            if s is not None and c != 2:
+                try:
+                    d = s.range
+                    if 10 < d < 2000:
+                        distancias_base[c] = d
+                except Exception:
+                    pass
 
     distancias_prev = {0: 50, 1: 50, 2: 50, 3: 50}
     sim_dist = {0: 50, 1: 50, 2: 50, 3: 50}
@@ -153,7 +182,7 @@ def main():
             lineas.append(f"{BOLD}{WHITE}+=========================================================================================+{RESET}")
 
             modo_str = f"{GREEN}[HARDWARE REAL I2C ACTIVO]{RESET}" if HARDWARE_REAL else f"{YELLOW}[MODO DEMO / SIMULACION]{RESET}"
-            lineas.append(f" Estado General: {modo_str} | Calibracion: {DIST_LLENO_MM}mm = 100% (Tope) | {DIST_VACIO_MM}mm = 0% (Libre)")
+            lineas.append(f" Estado General: {modo_str} | Auto-Tara: Reposo={distancias_base[0]}/{distancias_base[1]}/{distancias_base[3]} mm")
             lineas.append(f"{GRAY}-----------------------------------------------------------------------------------------{RESET}")
             lineas.append(f"{BOLD}{'CANAL / SENSOR':<22} {'DIST':<8} {'NIVEL':<8} {'GRAFICA EN TIEMPO REAL':<32} {'ESTADO SENSOR'}{RESET}")
             lineas.append(f"{GRAY}-----------------------------------------------------------------------------------------{RESET}")
@@ -199,7 +228,7 @@ def main():
 
                 # Si está midiendo normalmente
                 if dist_mm < 8000:
-                    pct = calcular_pct(dist_mm, canal=c)
+                    pct = calcular_pct(dist_mm, canal=c, dist_base=distancias_base[c])
                     barra = generar_barra(pct, ancho=20)
 
                     # Indicador de tendencia (subiendo o bajando)
@@ -212,12 +241,13 @@ def main():
                         flecha = f"{GRAY}(- Estable)  {RESET}"
                     distancias_prev[c] = dist_mm
 
-                    # Diagnóstico inmediato del dedo
+                    # Diagnóstico inmediato del dedo usando la distancia base calibrada
+                    base_estanque = distancias_base[c]
                     if dist_mm <= 22:
                         estado_str = f"{RED}{BOLD}[!] DEDO MUY CERCA / TOPE{RESET}"
                     elif dist_mm <= 35:
                         estado_str = f"{GREEN}{BOLD}>>> DEDO DETECTADO!{RESET}"
-                    elif dist_mm <= 45:
+                    elif dist_mm <= (base_estanque - 6):
                         estado_str = f"{YELLOW}[~] Obstaculo cerca{RESET}"
                     else:
                         estado_str = f"{GRAY}[ ] Libre / Sin dedo{RESET}"

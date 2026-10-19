@@ -11,8 +11,8 @@ PIN_MUX_RESET = 17
 CANALES_BYPASS = [2]  # Canal 2 (Estanque 1 / Bornera J20) averiado fisicamente; omitir
 
 GEOMETRIA_ESTANQUES = {
-    0: {"vacio_mm": 125, "lleno_mm": 20, "nombre": "Estanque 2 (Canal 0)"},
-    1: {"vacio_mm": 45,  "lleno_mm": 15, "nombre": "Estanque 4 (Canal 1)"},
+    0: {"vacio_mm": 128, "lleno_mm": 20, "nombre": "Estanque 2 (Canal 0)"},
+    1: {"vacio_mm": 82,  "lleno_mm": 15, "nombre": "Estanque 4 (Canal 1)"},
     2: {"vacio_mm": 150, "lleno_mm": 20, "nombre": "Estanque 1 (Canal 2 / BYPASS)"},
     3: {"vacio_mm": 65,  "lleno_mm": 20, "nombre": "Estanque 3 (Canal 3)"},
 }

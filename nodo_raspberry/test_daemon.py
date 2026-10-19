@@ -19,7 +19,17 @@ import logging
 import os
 import math
 import sys
-from pyModbusTCP.client import ModbusClient
+try:
+    from pyModbusTCP.client import ModbusClient
+except ImportError:
+    class ModbusClient:
+        def __init__(self, *args, **kwargs):
+            self.is_open = False
+        def open(self): return False
+        def close(self): pass
+        def write_multiple_registers(self, *a, **kw): return False
+        def write_single_register(self, *a, **kw): return False
+        def read_holding_registers(self, *a, **kw): return None
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -46,25 +56,30 @@ DIST_VACIO_MM = 50
 DIST_LLENO_MM = 20
 
 # Geometría real por estanque según mediciones físicas (distancia sensor a fondo vs nivel alto)
-# Canal 0: Estanque 2 (J18, Bomba P2)
-# Canal 1: Estanque 4 (J19, Bomba P4)
+# Canal 0: Estanque 2 (J18, Bomba P2) - Vacío medido: ~128 mm, Lleno: 20 mm
+# Canal 1: Estanque 4 (J19, Bomba P4) - Vacío medido: ~82 mm,  Lleno: 15 mm
 # Canal 2: Estanque 1 (J20, Bomba P1 - Sensor físico defectuoso / Bypass)
-# Canal 3: Estanque 3 (J21, Bomba P3)
+# Canal 3: Estanque 3 (J21, Bomba P3) - Vacío medido: ~65 mm,  Lleno: 20 mm
 GEOMETRIA_ESTANQUES = {
-    0: {"vacio": 125, "lleno": 20},  # Canal 0: Estanque 2
-    1: {"vacio": 45,  "lleno": 15},  # Canal 1: Estanque 4
+    0: {"vacio": 128, "lleno": 20},  # Canal 0: Estanque 2
+    1: {"vacio": 82,  "lleno": 15},  # Canal 1: Estanque 4
     2: {"vacio": 150, "lleno": 20},  # Canal 2: Estanque 1 (Bypass)
     3: {"vacio": 65,  "lleno": 20},  # Canal 3: Estanque 3
 }
 
-def calcular_pct_canal(canal, mm):
+def calcular_pct_canal(canal, mm, dist_base=None):
     if mm is None or mm >= 8000 or mm <= 0:
         return 0.0
     geom = GEOMETRIA_ESTANQUES.get(canal, {"vacio": DIST_VACIO_MM, "lleno": DIST_LLENO_MM})
-    vacio = geom["vacio"]
+    vacio = dist_base if dist_base is not None else geom["vacio"]
     lleno = geom["lleno"]
-    if vacio == lleno:
+    if vacio <= lleno:
         return 0.0
+    # Zona muerta de 2 mm contra ruido/vibraciones en reposo
+    if mm >= (vacio - 2):
+        return 0.0
+    if mm <= lleno:
+        return 100.0
     pct = (vacio - mm) / (vacio - lleno) * 100.0
     return max(0.0, min(100.0, round(pct, 1)))
 
@@ -144,7 +159,8 @@ class HiloLectorSensores(threading.Thread):
         self.bus_freeze_count = 0
 
     def _calcular_pct(self, canal, mm):
-        return calcular_pct_canal(canal, mm)
+        base = self.hw.distancias_base.get(canal, None)
+        return calcular_pct_canal(canal, mm, dist_base=base)
 
     def run(self):
         while self.corriendo:
@@ -170,8 +186,9 @@ class HiloLectorSensores(threading.Thread):
                     break
 
                 if c in self.hw.bypass_canales:
+                    base = self.hw.distancias_base.get(c, 150)
                     with self.lock:
-                        self.hw._cache_distancias_mm[c] = 8190
+                        self.hw._cache_distancias_mm[c] = base
                         self.hw._cache_pct[c] = 0.0
                         self.hw.estado_sensores[c] = "BYPASS (Omitido)"
                     continue
@@ -185,8 +202,9 @@ class HiloLectorSensores(threading.Thread):
                 try:
                     # Lectura directa y síncrona en este hilo secundario
                     dist = sensor.range
+                    base = self.hw.distancias_base.get(c, None)
                     if 0 < dist < 8000:
-                        pct = calcular_pct_canal(c, dist)
+                        pct = calcular_pct_canal(c, dist, dist_base=base)
                         with self.lock:
                             self.hw._cache_distancias_mm[c] = dist
                             self.hw._cache_pct[c] = pct
@@ -194,21 +212,33 @@ class HiloLectorSensores(threading.Thread):
                         self.fallos_consecutivos[c] = 0
                         lecturas_validas += 1
                     else:
-                        # Fuera de rango puntual
+                        # Fuera de rango (estanque vacío o sin objetivo en rango)
                         self.fallos_consecutivos[c] += 1
-                        if self.fallos_consecutivos[c] >= 4:
-                            with self.lock:
-                                self.hw._cache_distancias_mm[c] = 8190
-                                self.hw._cache_pct[c] = 0.0
-                                self.hw.estado_sensores[c] = f"FUERA DE RANGO ({dist} mm)"
+                        fallback_mm = base if base is not None else GEOMETRIA_ESTANQUES.get(c, {}).get("vacio", 150)
+                        with self.lock:
+                            self.hw._cache_distancias_mm[c] = fallback_mm
+                            self.hw._cache_pct[c] = 0.0
+                            self.hw.estado_sensores[c] = f"FUERA DE RANGO ({dist} mm)"
 
                 except Exception as e:
                     self.fallos_consecutivos[c] += 1
-                    if self.fallos_consecutivos[c] >= 4:
-                        with self.lock:
-                            self.hw._cache_distancias_mm[c] = 8190
-                            self.hw._cache_pct[c] = 0.0
-                            self.hw.estado_sensores[c] = f"ERROR LECTURA ({e})"
+                    base = self.hw.distancias_base.get(c, 150)
+                    with self.lock:
+                        self.hw._cache_distancias_mm[c] = base
+                        self.hw._cache_pct[c] = 0.0
+                        self.hw.estado_sensores[c] = f"ERROR LECTURA ({e})"
+
+                    # Auto-recuperación individual del canal si falla 3 veces seguidas
+                    if self.fallos_consecutivos[c] >= 3:
+                        try:
+                            sensor_recup = VL53L0X(self.hw.mux[c], io_timeout_s=0.5)
+                            if hasattr(sensor_recup, "measurement_timing_budget"):
+                                sensor_recup.measurement_timing_budget = 33000
+                            self.hw.sensores[c] = sensor_recup
+                            self.fallos_consecutivos[c] = 0
+                            logger.info(f"[AUTO-RECUPERACION] Sensor en canal {c} recuperado.")
+                        except Exception:
+                            pass
 
             # Vigilancia de congelamiento de bus (Opción B)
             # Solo si hay sensores habilitados pero ninguno logra leer durante varios barridos seguidos (~3-4 seg)
@@ -242,8 +272,22 @@ class HardwareManager:
         self.estado_bombas = [False, False, False, False]
         self.niveles_simulados = [25.0, 25.0, 25.0, 25.0]
 
+        # Distancias base de reposo (Auto-tara / Linea base)
+        # Se calibran automaticamente al inicio con la primera lectura valida de cada estanque
+        self.distancias_base = {
+            0: GEOMETRIA_ESTANQUES[0]["vacio"],  # ~128 mm (Estanque 2)
+            1: GEOMETRIA_ESTANQUES[1]["vacio"],  # ~82 mm  (Estanque 4)
+            2: GEOMETRIA_ESTANQUES[2]["vacio"],  # 150 mm  (Estanque 1 / Bypass)
+            3: GEOMETRIA_ESTANQUES[3]["vacio"],  # ~65 mm  (Estanque 3)
+        }
+
         # Cache compartida de lecturas en RAM (Opcion C)
-        self._cache_distancias_mm = [50, 50, 50, 50]
+        self._cache_distancias_mm = [
+            self.distancias_base[0],
+            self.distancias_base[1],
+            self.distancias_base[2],
+            self.distancias_base[3]
+        ]
         self._cache_pct = [0.0, 0.0, 0.0, 0.0]
 
         if HAY_TIRAS:
@@ -348,10 +392,11 @@ class HardwareManager:
                                 self.estado_sensores[canal] = f"CONECTADO PERO FUERA DE RANGO ({dist_test} mm)"
                                 print(f"\r   [!] ADVERTENCIA: Responde I2C pero lectura fuera de rango ({dist_test} mm)\n")
                             else:
-                                self.estado_sensores[canal] = f"OPERATIVO (Midiendo {dist_test} mm)"
-                                print(f"\r   [+] OPERATIVO: Sensor OK | Medida inicial: {dist_test} mm\n")
+                                self.distancias_base[canal] = dist_test
+                                self.estado_sensores[canal] = f"OPERATIVO (Calibrado Base: {dist_test} mm)"
+                                print(f"\r   [+] OPERATIVO: Sensor OK | Medida base calibrada: {dist_test} mm\n")
                                 self._cache_distancias_mm[canal] = dist_test
-                                self._cache_pct[canal] = calcular_pct_canal(canal, dist_test)
+                                self._cache_pct[canal] = calcular_pct_canal(canal, dist_test, dist_base=dist_test)
 
                             self.sensores[canal] = sensor
                         except Exception as e:
@@ -662,25 +707,26 @@ class RtuHardwareGateway:
                 porcentajes_calculados = []
                 for i in range(4):
                     dist_cruda = distancias_crudas[i]
-                    if dist_cruda < 8000:
+                    geom = GEOMETRIA_ESTANQUES.get(i, {"vacio": 50, "lleno": 20})
+                    base_vacio = self.hw.distancias_base.get(i, geom["vacio"])
+
+                    if i in self.hw.bypass_canales:
+                        self.historial_distancias[i].clear()
+                        promedio = base_vacio
+                        pct = 0.0
+                    elif dist_cruda < 8000:
                         self.historial_distancias[i].append(dist_cruda)
                         if len(self.historial_distancias[i]) > self.max_muestras:
                             self.historial_distancias[i].pop(0)
                         promedio = int(sum(self.historial_distancias[i]) / len(self.historial_distancias[i]))
+                        pct = calcular_pct_canal(i, promedio, dist_base=base_vacio)
                     else:
-                        if len(self.historial_distancias[i]) > 0:
-                            promedio = int(sum(self.historial_distancias[i]) / len(self.historial_distancias[i]))
-                        else:
-                            geom = GEOMETRIA_ESTANQUES.get(i, {"vacio": 50, "lleno": 20})
-                            promedio = geom["vacio"] if not self.hw.skip_sensores else dist_cruda
-                        
-                    distancias_suavizadas.append(promedio)
-
-                    if i in self.hw.bypass_canales and len(self.historial_distancias[i]) == 0:
+                        # Fuera de rango o lectura inválida: limpiar historial para que el obstáculo no quede pegado
+                        self.historial_distancias[i].clear()
+                        promedio = base_vacio if not self.hw.skip_sensores else dist_cruda
                         pct = 0.0
-                    else:
-                        pct = calcular_pct_canal(i, promedio)
 
+                    distancias_suavizadas.append(promedio)
                     porcentajes_calculados.append(pct)
 
                     if pct > max_pct_calculado:
@@ -773,9 +819,10 @@ class RtuHardwareGateway:
                         llenos = max(0, min(10, int(round((p_pct / 100.0) * 10))))
                         barra_ascii = "#" * llenos + "." * (10 - llenos)
                         
+                        base_d = self.hw.distancias_base.get(ch, 100)
                         if p_pct >= 75:
                             dedo_tag = ">>> [DEDO MUY CERCA / TOPE]"
-                        elif p_pct >= 30:
+                        elif p_pct >= 20 or (ch not in self.hw.bypass_canales and d < (base_d - 6)):
                             dedo_tag = "    [OBSTACULO DETECTADO]"
                         else:
                             dedo_tag = "    [LIBRE / SIN DEDO]"
