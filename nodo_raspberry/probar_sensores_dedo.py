@@ -28,8 +28,16 @@ CANALES_MAPA = [
     {"ch": 1, "estanque": "Estanque 4", "bornera": "J19", "bomba": "P4"},
 ]
 
-DIST_VACIO_MM = 50   # Sensor libre / sin dedo (0%)
-DIST_LLENO_MM = 20   # Dedo pegado al sensor / nivel tope (100%)
+# Configuración de Geometría por Estanque
+GEOMETRIA_CANALES = {
+    0: (125, 20),   # Estanque 2 (J18, P2) - Vacio: 125mm, Lleno: 20mm
+    1: (45, 15),    # Estanque 4 (J19, P4) - Vacio: 45mm,  Lleno: 15mm
+    2: (150, 20),   # Estanque 1 (J20, P1) - Vacio: 150mm, Lleno: 20mm (Sensor dañado)
+    3: (65, 20),    # Estanque 3 (J21, P3) - Vacio: 65mm,  Lleno: 20mm
+}
+
+DIST_VACIO_MM = 50   # Fallback generico
+DIST_LLENO_MM = 20
 
 # Colores ANSI
 RESET = "\033[0m"
@@ -47,8 +55,6 @@ HARDWARE_REAL = False
 sensores = {0: None, 1: None, 2: None, 3: None}
 mux = None
 
-import threading
-
 try:
     import board
     import busio
@@ -56,40 +62,56 @@ try:
     from adafruit_vl53l0x import VL53L0X
     import RPi.GPIO as GPIO
 
+    # Reset fisico del multiplexor TCA9548A mediante GPIO 17
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
+    GPIO.setup(17, GPIO.OUT, initial=GPIO.HIGH)
+    GPIO.output(17, GPIO.LOW)
+    time.sleep(0.02)
+    GPIO.output(17, GPIO.HIGH)
+    time.sleep(0.05)
+
     i2c = busio.I2C(board.SCL, board.SDA)
     mux = adafruit_tca9548a.TCA9548A(i2c, address=0x70)
 
-    def _conectar_sensor_seguro(canal_num, timeout_seg=1.5):
-        # El Canal 2 (J20, Estanque 1) se sabe que cuelga la inicializacion en la maqueta
-        if canal_num == 2 and "--con-canal-2" not in sys.argv:
-            return None
-        contenedor = [None]
-        def _hilo():
-            try:
-                contenedor[0] = VL53L0X(mux[canal_num])
-            except Exception:
-                pass
-        t = threading.Thread(target=_hilo, daemon=True)
-        t.start()
-        t.join(timeout_seg)
-        return contenedor[0]
-
     for item in CANALES_MAPA:
         c = item["ch"]
-        sensores[c] = _conectar_sensor_seguro(c)
+        # El Canal 2 (J20, Estanque 1) se omite porque su sensor cuelga el bus
+        if c == 2 and "--con-canal-2" not in sys.argv:
+            sensores[c] = None
+            continue
+        try:
+            try:
+                sensor = VL53L0X(mux[c], io_timeout_s=0.5)
+            except TypeError:
+                sensor = VL53L0X(mux[c])
+            if hasattr(sensor, "measurement_timing_budget"):
+                try:
+                    sensor.measurement_timing_budget = 33000
+                except Exception:
+                    pass
+            sensores[c] = sensor
+        except Exception:
+            sensores[c] = None
 
     HARDWARE_REAL = True
 except Exception:
     HARDWARE_REAL = False
 
 
-def calcular_pct(dist_mm):
-    """Convierte distancia en mm a porcentaje de nivel (0% a 100%)."""
-    if dist_mm >= DIST_VACIO_MM:
+def calcular_pct(dist_mm, canal=None):
+    """Convierte distancia en mm a porcentaje de nivel (0% a 100%) segun geometria del estanque."""
+    if dist_mm >= 8000 or dist_mm <= 0:
         return 0.0
-    if dist_mm <= DIST_LLENO_MM:
+    if canal in GEOMETRIA_CANALES:
+        vacio, lleno = GEOMETRIA_CANALES[canal]
+    else:
+        vacio, lleno = DIST_VACIO_MM, DIST_LLENO_MM
+    if dist_mm >= vacio:
+        return 0.0
+    if dist_mm <= lleno:
         return 100.0
-    return ((DIST_VACIO_MM - dist_mm) / (DIST_VACIO_MM - DIST_LLENO_MM)) * 100.0
+    return max(0.0, min(100.0, ((vacio - dist_mm) / (vacio - lleno)) * 100.0))
 
 
 def generar_barra(pct, ancho=22):
@@ -149,7 +171,10 @@ def main():
                     sensor = sensores.get(c)
                     if sensor is None:
                         dist_mm = 8190
-                        estado_str = f"{RED}[X] NO DETECTADO / DANIADO{RESET}"
+                        if c == 2:
+                            estado_str = f"{YELLOW}[~] BYPASS / SENSOR DEFECTUOSO{RESET}"
+                        else:
+                            estado_str = f"{RED}[X] NO DETECTADO / DANIADO{RESET}"
                     else:
                         try:
                             d = sensor.range
@@ -174,7 +199,7 @@ def main():
 
                 # Si está midiendo normalmente
                 if dist_mm < 8000:
-                    pct = calcular_pct(dist_mm)
+                    pct = calcular_pct(dist_mm, canal=c)
                     barra = generar_barra(pct, ancho=20)
 
                     # Indicador de tendencia (subiendo o bajando)
