@@ -2,3 +2,8 @@
 moar_contexto/
 __pycache__/
 *.pyc
+
+# Desafíos internos de la Kill Chain IT (no subir a la nube)
+files/killchain-it/
+killchain-it/
+

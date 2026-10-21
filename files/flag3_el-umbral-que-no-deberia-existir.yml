@@ -1,0 +1,40 @@
+---
+name: "El umbral que no deberia existir"
+author: "Cristopher"
+category: "ICS"
+description: |
+  Ya sabes mentirle al sensor. Ahora el objetivo es el panel HMI de la planta: su estado deberia reflejar la realidad del proceso, pero hay un valor "fuera de dominio" que ningun estado normal produce y que, bien aplicado, fuerza al sistema a comportarse de una manera que no deberia.
+
+  El problema es que nadie te va a decir cual es ese valor, y tampoco hay manera sensata de probarlos todos. Alguien del equipo de mantenimiento si lo sabe, y lo documento en algun lugar. Encuentra el rango de falla y aprovechalo.
+
+  La seguridad por oscuridad no es seguridad.
+
+  * El estado que provocas no dura para siempre: se reordena solo despues de unos segundos.
+
+  ![](https://github.com/pwnnisher/static/blob/main/512/matrix-512.jpg?raw=true)
+value: 200
+type: standard
+connection_info: "REEMPLAZAR: IP del PLC en el segmento OT (puertos 80/TCP y 502/TCP)"
+
+flags:
+  - flag{REEMPLAZAR_FLAG3}
+
+tags:
+  - ics
+  - modbus
+  - web-recon
+  - information-disclosure
+  - sector3
+
+hints:
+  - content: "El PLC no solo expone Modbus: tambien corre un pequeno servidor web. Exploralo, y no te quedes solo con lo que se ve renderizado en pantalla."
+    cost: 15
+  - content: "El codigo fuente de una pagina a veces dice mas que la pagina misma. Busca comentarios que nadie deberia haber dejado ahi."
+    cost: 40
+  - content: "El comentario que buscas menciona un rango de valores para el registro de estado del HMI: cualquier valor dentro de ese rango dispara la condicion, no solo uno. Ese estado se reordena solo despues de unos segundos, asi que confirma la flag rapido tras escribirlo."
+    cost: 70
+
+learned: "Information leaks in secondary services (HTML comments on a PLC web portal) can collapse a brute-force search space for a different protocol. Multi-protocol reconnaissance matters in OT: the weakness is rarely where the industrial protocol is."
+comment: "Medium. Redesigned from an exact-value guess (999) to a range (900-999 via IN_RANGE in FB2 Control_HMI) with the range leaked in an HTML comment (Ticket #8472) in the PLC web server index.html. Requires: (1) discovering HTTP on port 80, (2) viewing page source, (3) writing any value 900-999 to HR9, (4) reading the payload (HR30-HR37) before the state resets. Anti-brute-force: the range is only discoverable through the web source. PRE-PUBLISH CHECKS: IN_RANGE change implemented in TIA; HTML comment present; edges 900/999 trigger, 899/1000 do not; index.html shared with Flag 4, do not overwrite."
+state: visible
+version: "1.0"

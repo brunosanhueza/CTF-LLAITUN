@@ -1,0 +1,39 @@
+---
+name: "El rebalse real"
+author: "Cristopher"
+category: "ICS"
+description: |
+  Has aprendido a mentirle al sensor y a mentirle al HMI, pero nunca has causado un dano fisico real.
+
+  Intentas lo obvio: subir el nivel del estanque y encender la bomba al mismo tiempo para forzar un rebalse. Pero algo no cuadra: cada vez que lo intentas, la bomba se apaga sola, como si el sistema se defendiera de ti.
+
+  Tu objetivo es lograr el impacto fisico real sobre el Estanque 1.
+
+  * La _flag_ tiene el formato `flag{...}` (minusculas).
+
+  ![](https://github.com/pwnnisher/static/blob/main/512/matrix-512.jpg?raw=true)
+value: 300
+type: standard
+connection_info: "REEMPLAZAR: IP del PLC en el segmento OT (puerto 502/TCP)"
+
+flags:
+  - flag{ot_overflow}
+
+tags:
+  - ics
+  - modbus
+  - safety-interlock
+  - sector3
+
+hints:
+  - content: "No es casualidad que la bomba se apague sola. Hay una logica de seguridad activa en el PLC que revierte tus cambios en cada ciclo de control: no basta con un solo intento, tienes que entender que la esta bloqueando."
+    cost: 20
+  - content: "En sistemas industriales reales casi siempre existe un modo de 'mantenimiento' o 'anulacion de seguridad' pensado para tecnicos, y casi nunca esta bien protegido. Ese interruptor no aparece en el trafico normal del panel HMI legitimo: vas a tener que escanear todo el rango de registros expuestos, no solo los que ya conoces."
+    cost: 50
+  - content: "Necesitas tres condiciones activas a la vez, en el mismo ciclo: el nivel del estanque por encima del umbral seguro, la bomba encendida y el bit de anulacion activado. Cuidado con como escribes los valores: dos condiciones distintas del sistema comparten el mismo registro, y activar la incorrecta al mismo tiempo puede apagarte la bomba sin que te des cuenta de por que."
+    cost: 100
+
+learned: "Safety interlocks implemented in PLC logic can be defeated when a maintenance/override bit is exposed over an unauthenticated protocol. Attacks on physical processes require coordinating several points of control in the same scan cycle, not a single write."
+comment: "Hard. Requires: (1) writing level > 90 (HR10) and pump bit (HR0 bit 9), (2) observing the interlock reset the pump, (3) enumerating the full register space and finding Override_Seguridad (HR11 bit 8), (4) activating override, then re-enabling pump, (5) reading HR12-HR20 for the flag. Not a value hunt: it is a coordination problem against a system that actively resists. Confirmed working on the physical S7-1200. Difficulty vs. hint 2 (explicitly says to scan all registers) is worth validating in playtesting."
+state: visible
+version: "1.0"

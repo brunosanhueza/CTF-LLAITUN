@@ -1,0 +1,39 @@
+---
+name: "Inyeccion en el nucleo Siemens"
+author: "Cristopher"
+category: "ICS"
+description: |
+  Has dominado el proceso hidrico por Modbus. Pero el sistema de iluminacion de los departamentos de la SmartCity es otra historia: esta controlado por una red domotica industrial, y la interfaz Modbus que ya conoces no tiene acceso a esos registros. No importa que combinacion intentes, no vas a encender esas luces por ahi.
+
+  Si encuentras la forma de actuar sobre ese subsistema, la rutina de entrega de la flag se desencadenara en el portal web de diagnostico del PLC.
+
+  * La _flag_ aparece en el portal de diagnostico web del PLC mientras la iluminacion este activa.
+  * El efecto no dura para siempre: ten el portal abierto antes de actuar.
+
+  ![](https://github.com/pwnnisher/static/blob/main/512/matrix-512.jpg?raw=true)
+value: 400
+type: standard
+connection_info: "REEMPLAZAR: IP del PLC en el segmento OT (puertos 80, 102 y 502/TCP)"
+
+flags:
+  - flag{REEMPLAZAR_FLAG4}
+
+tags:
+  - ics
+  - s7comm
+  - siemens
+  - protocol-pivot
+  - sector3
+
+hints:
+  - content: "El puerto TCP 102 esta activo en la maquina objetivo, ademas del 502 y el 80. Investiga que protocolo industrial usa ese puerto y que herramientas o librerias existen para hablarlo (piensa en snap7 para Python)."
+    cost: 25
+  - content: "La rutina de desbloqueo esta vinculada a un bloque de datos interno, no expuesto por Modbus. Busca el bit de activacion en el byte inicial de ese bloque."
+    cost: 60
+  - content: "Al escribir un 1 (TRUE) en el bit de activacion mediante S7comm, la logica interna del PLC escribira la flag en la variable mapeada al servidor web de diagnostico. Manten abierta la pagina del portal web para capturarla: el efecto no dura para siempre."
+    cost: 120
+
+learned: "A PLC can expose memory over a proprietary protocol (S7comm, port 102) that is entirely unreachable from its Modbus map. With PUT/GET enabled, S7comm lets any reachable host write directly to data blocks without authentication."
+comment: "Hard. Protocol pivot Modbus -> S7comm. Requires: (1) discovering TCP 102, (2) learning Rack/Slot/DB/offset addressing and python-snap7, (3) setting DB11 DBX0.0 (Activar_LEDs) via db_read/set_bool/db_write, (4) capturing Flag_Texto from the AWP web page within the 10 s TON window. Modbus-side attempts to light the LED are overwritten on the next OB1 scan. PRE-PUBLISH CHECKS: PUT/GET enabled, DB11 non-optimized, web server enabled at interface level, anonymous access to app 'ctf', blocks regenerated, index.html UTF-8 without BOM with true .html extension; run full end-to-end test (snap7 -> LED -> flag visible on web)."
+state: visible
+version: "1.0"

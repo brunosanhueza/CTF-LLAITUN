@@ -1,0 +1,40 @@
+---
+name: "Fuga en el sensor"
+author: "Cristopher"
+category: "ICS"
+description: |
+  El Sector 3 de la SmartCity simula la planta de tratamiento de agua de la ciudad. Un switch conecta el PLC de control, una Raspberry Pi y el panel HMI. Se ha detectado trafico no autorizado en la red del sector: algo, o alguien, esta hablando directamente con el proceso industrial sin pasar por ningun sistema de autenticacion.
+
+  Antes de tocar nada, alguien te avisa que el puerto 502 del PLC esta abierto hacia la red del sector. Ese puerto es el estandar de un protocolo muy usado en automatizacion industrial y, por diseno, no pide contrasena.
+
+  Tu primer objetivo es demostrar que puedes leer y escribir directamente sobre el proceso, y lograr que el sensor de nivel del Estanque 1 reporte algo que no deberia.
+
+  * La _flag_ tiene el formato `Flag[XXXXXXX]`.
+  * La informacion que buscas no se queda disponible para siempre: si la ves aparecer, capturala rapido.
+
+  ![](https://github.com/pwnnisher/static/blob/main/512/matrix-512.jpg?raw=true)
+value: 100
+type: standard
+connection_info: "REEMPLAZAR: IP del PLC en el segmento OT (puerto 502/TCP)"
+
+flags:
+  - Flag[REBALSE]
+  - Flag[R3B@l$e]
+
+tags:
+  - ics
+  - modbus
+  - sector3
+
+hints:
+  - content: "El puerto 502/TCP es la puerta de entrada. Investiga que protocolo industrial usa ese puerto y que herramientas existen para hablarlo (piensa en clientes tipo pymodbus, modpoll, QModMaster)."
+    cost: 10
+  - content: "Modbus organiza la memoria del PLC en 'holding registers' numerados desde 0. No necesitas credenciales, solo leer y escribir en la direccion correcta. Empieza por el principio del rango."
+    cost: 25
+  - content: "El primer registro no es un simple numero: es un conjunto de banderas empaquetadas bit a bit dentro de un mismo valor de 16 bits. Prueba escribiendo distintas potencias de 2 y observa que otros registros cambian justo despues."
+    cost: 45
+
+learned: "Modbus TCP has no authentication by design; any host that reaches port 502 can read and write process state. Coils/registers often pack several booleans into one 16-bit word, so single-bit writes (powers of 2) reveal hidden logic."
+comment: "Easy. Entry point of Sector 3. Requires: (1) discovering Modbus on 502, (2) reading holding registers, (3) writing 256 (bit 8) to HR0, (4) reading HR1-HR7 quickly (payload auto-clears after a short rearm timer). Flag payload is stored leetspeak-encoded (R3B@l$e); both variants are accepted pending a decision on the canonical form. Only one write needed; no process-logic understanding required."
+state: visible
+version: "1.0"

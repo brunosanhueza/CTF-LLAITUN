@@ -16,6 +16,8 @@
 import sys
 import time
 import os
+import concurrent.futures
+import statistics
 
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -35,6 +37,21 @@ GEOMETRIA_CANALES = {
     2: (150, 20),   # Estanque 1 (J20, P1) - Vacio: 150mm, Lleno: 20mm (Sensor dañado)
     3: (65, 20),    # Estanque 3 (J21, P3) - Vacio: 65mm,  Lleno: 20mm
 }
+
+CALIB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibracion_estanques.json")
+if os.path.exists(CALIB_FILE):
+    try:
+        import json
+        with open(CALIB_FILE, "r") as f:
+            _calib = json.load(f)
+            for k, v in _calib.items():
+                c = int(k)
+                if c in GEOMETRIA_CANALES:
+                    vac = int(v.get("vacio", GEOMETRIA_CANALES[c][0]))
+                    lle = int(v.get("lleno", GEOMETRIA_CANALES[c][1]))
+                    GEOMETRIA_CANALES[c] = (vac, lle)
+    except Exception:
+        pass
 
 DIST_VACIO_MM = 50   # Fallback generico
 DIST_LLENO_MM = 20
@@ -62,6 +79,18 @@ try:
     from adafruit_vl53l0x import VL53L0X
     import RPi.GPIO as GPIO
 
+    # Parche de seguridad para Adafruit VL53L0X:
+    # Previene el bucle infinito en _perform_single_ref_calibration
+    if hasattr(VL53L0X, "_perform_single_ref_calibration"):
+        def _safe_perform_single_ref_calibration(self, vhv_init_byte):
+            self._write_u8(0x00, 0x01 | vhv_init_byte)
+            t_inicio = time.monotonic()
+            while (self._read_u8(0x13) & 0x07) == 0:
+                if time.monotonic() - t_inicio > 0.35:
+                    raise RuntimeError("Timeout en calibracion interna VL53L0X")
+                time.sleep(0.005)
+        VL53L0X._perform_single_ref_calibration = _safe_perform_single_ref_calibration
+
     # Reset fisico del multiplexor TCA9548A mediante GPIO 17
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
@@ -81,10 +110,9 @@ try:
             sensores[c] = None
             continue
         try:
-            try:
-                sensor = VL53L0X(mux[c], io_timeout_s=0.5)
-            except TypeError:
-                sensor = VL53L0X(mux[c])
+            sensor = VL53L0X(mux[c])
+            if hasattr(sensor, "io_timeout_s"):
+                sensor.io_timeout_s = 0.25
             if hasattr(sensor, "measurement_timing_budget"):
                 try:
                     sensor.measurement_timing_budget = 33000
@@ -170,6 +198,7 @@ def main():
     distancias_prev = {0: 50, 1: 50, 2: 50, 3: 50}
     sim_dist = {0: 50, 1: 50, 2: 50, 3: 50}
     sim_dir = {0: -2, 1: -1, 2: -3, 3: -2}
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="test_range")
 
     try:
         while True:
@@ -206,12 +235,21 @@ def main():
                             estado_str = f"{RED}[X] NO DETECTADO / DANIADO{RESET}"
                     else:
                         try:
-                            d = sensor.range
+                            fut = executor.submit(getattr, sensor, "range")
+                            d = fut.result(timeout=0.35)
                             if 0 < d < 2000:
                                 dist_mm = d
                             else:
                                 dist_mm = 8190
                                 estado_str = f"{YELLOW}[!] FUERA DE RANGO{RESET}"
+                        except concurrent.futures.TimeoutError:
+                            dist_mm = 8190
+                            estado_str = f"{RED}[X] TIMEOUT I2C{RESET}"
+                            try:
+                                executor.shutdown(wait=False)
+                            except Exception:
+                                pass
+                            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="test_range")
                         except Exception:
                             dist_mm = 8190
                             estado_str = f"{RED}[X] ERROR I2C{RESET}"
