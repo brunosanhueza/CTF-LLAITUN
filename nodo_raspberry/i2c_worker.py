@@ -89,10 +89,6 @@ class BancoI2C:
             # configurar el timeout despues de crear el sensor. El supervisor
             # del proceso hijo limita cualquier bloqueo durante inicializacion.
             sensor = self.sensor_class(self.mux[channel])
-            if hasattr(sensor, "measurement_timing_budget"):
-                # Mismo ajuste usado por los diagnosticos antiguos. 33 ms es
-                # tambien el valor por defecto documentado por Adafruit.
-                sensor.measurement_timing_budget = 33000
             if hasattr(sensor, "io_timeout_s"):
                 sensor.io_timeout_s = 0.5
             self.sensors[channel] = sensor
