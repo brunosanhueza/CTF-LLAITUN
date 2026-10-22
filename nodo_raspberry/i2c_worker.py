@@ -12,6 +12,10 @@ def emit(kind, **values):
     print(json.dumps({"kind": kind, **values}), flush=True)
 
 
+class SensorNoDetectadoError(RuntimeError):
+    """No hay un VL53L0X con direccion 0x29 visible en el canal del mux."""
+
+
 class BancoI2C:
     def __init__(self):
         import RPi.GPIO as GPIO
@@ -29,9 +33,14 @@ class BancoI2C:
     def reset(self):
         # RST aisla los canales; no corta la alimentacion de los sensores.
         self.sensors.clear()
-        if self.i2c is not None:
-            self.i2c.deinit()
-            self.i2c = self.mux = None
+        old_i2c, self.i2c = self.i2c, None
+        self.mux = None
+        if old_i2c is not None:
+            # Un deinit fallido no debe impedir recrear el bus y pulsar RST.
+            try:
+                old_i2c.deinit()
+            except Exception:
+                pass
         self.gpio.setup(17, self.gpio.OUT, initial=self.gpio.HIGH)
         self.gpio.output(17, self.gpio.LOW)
         time.sleep(0.03)
@@ -40,11 +49,43 @@ class BancoI2C:
         self.i2c = self.busio.I2C(self.board.SCL, self.board.SDA)
         self.mux = self.mux_class(self.i2c, address=0x70)
 
+    def _sensor_presente(self, channel):
+        """Busca 0x29 detras del canal antes de inicializar el sensor."""
+        channel_bus = self.mux[channel]
+        try:
+            if not channel_bus.try_lock():
+                # Como en C3-PLC: si el scan no pudo tomar el bus, probar el
+                # constructor del driver, que confirma la presencia por ID.
+                return None
+        except Exception:
+            return None
+        try:
+            try:
+                addresses = channel_bus.scan()
+            except AttributeError:
+                # Compatibilidad con versiones antiguas de TCA9548A.
+                addresses = self.i2c.scan()
+            return 0x29 in addresses
+        except Exception:
+            # El HAL de C3-PLC trata el scan como una pista: si falla, el
+            # constructor del VL53L0X sigue siendo la prueba de presencia.
+            return None
+        finally:
+            try:
+                channel_bus.unlock()
+            except Exception:
+                pass
+
     def read(self, channel):
         if channel not in self.sensors:
-            # El timeout debe estar activo DURANTE el constructor.
+            presente = self._sensor_presente(channel)
+            if presente is False:
+                raise SensorNoDetectadoError(
+                    "No se detecto 0x29 en el canal %d del TCA9548A" % channel
+                )
+            # Mantener el mismo canal TCA y constructor que usa C3-PLC. El
+            # timeout debe quedar activo durante calibracion e inicializacion.
             sensor = self.sensor_class(self.mux[channel], io_timeout_s=0.5)
-            sensor.measurement_timing_budget = 33000
             self.sensors[channel] = sensor
         distance = int(self.sensors[channel].range)
         if not 0 < distance < 8000:
@@ -52,8 +93,13 @@ class BancoI2C:
         return distance
 
     def close(self):
-        if self.i2c is not None:
-            self.i2c.deinit()
+        i2c, self.i2c = self.i2c, None
+        self.mux = None
+        if i2c is not None:
+            try:
+                i2c.deinit()
+            except Exception:
+                pass
         # Solo RST pertenece a este proceso, nunca GPIO.cleanup() global.
         self.gpio.cleanup(17)
 
@@ -105,9 +151,19 @@ def run(config, stop, bank_factory=BancoI2C, send=emit):
                     failures[c] = 0
                     last_valid = time.monotonic()
                 except Exception as exc:
-                    failures[c] += 1
-                    retry[c] = time.monotonic() + min(60, 2.5 * 2 ** min(failures[c] - 1, 5))
-                    bank.sensors.pop(c, None)
+                    if isinstance(exc, SensorNoDetectadoError):
+                        # Rebuscar cada 3 s, como hacia C3-PLC con sensores
+                        # desconectados. El scan no crea objetos ni carga el bus.
+                        retry[c] = time.monotonic() + 3.0
+                    else:
+                        failures[c] += 1
+                        # C3-PLC conserva el objeto ante fallos puntuales y lo
+                        # vuelve a crear tras tres lecturas consecutivas fallidas.
+                        delay = min(3.0, 0.5 * 2 ** min(failures[c] - 1, 3))
+                        if failures[c] >= 3:
+                            bank.sensors.pop(c, None)
+                            failures[c] = 0
+                        retry[c] = time.monotonic() + delay
                     send("sample", channel=c, state="ERROR", error=str(exc)[:200])
             send("heartbeat")
             stop.wait(0.2)

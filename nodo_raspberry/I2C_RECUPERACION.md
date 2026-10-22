@@ -22,8 +22,12 @@ muere el padre, mediante `PR_SET_PDEATHSIG`.
 - Hay como maximo 3 arranques por ventana movil de 300 s, contando tambien
   intentos de arranque fallidos. Esperas entre intentos: 2, 4 y 8 segundos.
   Agotado el presupuesto, se espera hasta recuperar una plaza en la ventana.
-- Un fallo de canal se reintenta con esperas de 2,5, 5, 10, 20, 40 y 60 s.
-  Un fallo individual con otros sensores operativos no reinicia el bus entero.
+- Antes de crear un sensor se busca su direccion 0x29 en el canal TCA, como en
+  `C3-PLC/hal.py`. Si no aparece, ese canal se vuelve a buscar cada 3 s. Si el
+  escaneo falla, se intenta igualmente el constructor del driver.
+- Un error puntual de lectura se reintenta a los 0,5, 1 y 2 s. El objeto se
+  conserva durante los dos primeros fallos y se recrea tras el tercero. Un
+  fallo individual con otros sensores operativos no reinicia el bus entero.
 - Sin ninguna lectura valida durante 15 s, se intenta resetear el MUX y
   reconstruir el bus; tambien se hace si nunca se pudo inicializar un sensor.
   Maximo 3 intentos de reset por ventana movil de 300 s por proceso lector. El reset inicial
@@ -59,8 +63,8 @@ Desde `nodo_raspberry`, con el mismo entorno y permisos usados anteriormente:
 python3 rtu_daemon.py --con-sensores
 ```
 
-El modo normal registra cambios de estado y un resumen cada 30 ciclos.
-Para la tabla detallada cada dos ciclos:
+El modo normal muestra la tabla de barras al arrancar y cada 10 s. Para
+refrescarla cada 2 s durante el diagnostico:
 
 ```bash
 RTU_TELEMETRIA=1 python3 rtu_daemon.py --con-sensores
@@ -68,7 +72,9 @@ RTU_TELEMETRIA=1 python3 rtu_daemon.py --con-sensores
 python3 test_daemon.py --con-sensores
 ```
 
-`--sin-sensores` sigue siendo una simulacion explicita: no crea un lector.
+`RTU_TELEMETRIA=0` desactiva esa tabla; un numero distinto de 0 configura el
+intervalo en segundos. `--sin-sensores` sigue siendo una simulacion explicita:
+no crea un lector.
 No ejecutar a la vez `main.py`, calibradores ni otras herramientas I2C sobre
 la maqueta. El supervisor evita duplicar sus propios hijos; no coordina con
 programas externos.
