@@ -32,10 +32,10 @@ CANALES_MAPA = [
 
 # Configuración de Geometría por Estanque
 GEOMETRIA_CANALES = {
-    0: (128, 20),   # Estanque 2 (J18, P2) - Vacio: 128mm, Lleno: 20mm
-    1: (82, 15),    # Estanque 4 (J19, P4) - Vacio: 82mm,  Lleno: 15mm
-    2: (150, 20),   # Estanque 1 (J20, P1) - Vacio: 150mm, Lleno: 20mm (Sensor dañado)
-    3: (65, 20),    # Estanque 3 (J21, P3) - Vacio: 65mm,  Lleno: 20mm
+    0: (128, 46),   # Estanque 2 (J18, P2) - Vacio: 128mm, Lleno: 46mm
+    1: (85, 46),    # Estanque 4 (J19, P4) - Vacio: 85mm,  Lleno: 46mm
+    2: (150, 46),   # Estanque 1 (J20, P1) - Vacio: 150mm, Lleno: 46mm (Sensor dañado)
+    3: (60, 46),    # Estanque 3 (J21, P3) - Vacio: 60mm,  Lleno: 46mm
 }
 
 CALIB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibracion_estanques.json")
@@ -53,8 +53,8 @@ if os.path.exists(CALIB_FILE):
     except Exception:
         pass
 
-DIST_VACIO_MM = 50   # Fallback generico
-DIST_LLENO_MM = 20
+DIST_VACIO_MM = 60   # Fallback generico
+DIST_LLENO_MM = 46
 
 # Colores ANSI
 RESET = "\033[0m"
@@ -142,8 +142,8 @@ def calcular_pct(dist_mm, canal=None, dist_base=None):
     else:
         vacio, lleno = DIST_VACIO_MM, DIST_LLENO_MM
 
-    # Zona muerta de 2 mm contra ruido del sensor en reposo
-    if dist_mm >= (vacio - 2):
+    # Zona muerta de 3 mm contra ruido del sensor en reposo
+    if dist_mm >= (vacio - 3):
         return 0.0
     if dist_mm <= lleno:
         return 100.0
@@ -180,9 +180,9 @@ def main():
     # Distancias base de reposo (Auto-Tara al iniciar)
     distancias_base = {
         0: GEOMETRIA_CANALES[0][0],  # 128 mm (Estanque 2)
-        1: GEOMETRIA_CANALES[1][0],  # 82 mm  (Estanque 4)
+        1: GEOMETRIA_CANALES[1][0],  # 85 mm  (Estanque 4)
         2: GEOMETRIA_CANALES[2][0],  # 150 mm (Estanque 1 / Bypass)
-        3: GEOMETRIA_CANALES[3][0],  # 65 mm  (Estanque 3)
+        3: GEOMETRIA_CANALES[3][0],  # 60 mm  (Estanque 3)
     }
 
     if HARDWARE_REAL:
@@ -190,7 +190,9 @@ def main():
             if s is not None and c != 2:
                 try:
                     d = s.range
-                    if 10 < d < 2000:
+                    # Solo actualizar base si no hay un obstáculo/dedo pegado al sensor en arranque
+                    lim_lleno = GEOMETRIA_CANALES[c][1]
+                    if (lim_lleno + 6) < d < 2000:
                         distancias_base[c] = d
                 except Exception:
                     pass

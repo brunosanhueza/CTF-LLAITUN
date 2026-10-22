@@ -176,21 +176,16 @@ SENSORES = [
 # significa menos agua, se intercambian los dos numeros y listo:
 #   VACIO = 300, LLENO = 50   ->  sensor en la tapa, mide hasta la superficie
 DISTANCIA_ESTANQUE_VACIO_MM = 0     # lectura con el estanque vacio
-DISTANCIA_ESTANQUE_LLENO_MM = 40    # lectura con el estanque lleno
+DISTANCIA_ESTANQUE_LLENO_MM = 46    # lectura con el estanque lleno (calibrado a 46 mm)
 
 # Geometria REAL por estanque (distancia_vacio_mm, distancia_lleno_mm), medida
 # a mano en cada tanque. Sensor mirando hacia abajo: MENOS distancia = MAS
 # agua (al reves que el fallback generico de arriba).
-#
-# Estanque 4 (P4): medido el 2026-10-07. Tanque de 15 cm de diametro, 5.5 cm
-# (55 mm) del fondo a la tapa donde va el sensor. Vacio=45 mm (el sensor no
-# llega a medir el fondo exacto por el espacio de montaje), lleno=15 mm.
-#
-# Los otros tres (P1, P2, P3) TODAVIA NO estan medidos: quedan con el
-# fallback generico (0/40 mm) hasta que se midan igual que el 4. Agregar su
-# entrada aqui apenas se tengan los numeros reales.
 GEOMETRIA_ESTANQUES = {
-    "P4": (45, 15),
+    "P1": (150, 46),
+    "P2": (128, 46),
+    "P3": (60, 46),
+    "P4": (85, 46),
 }
 
 # Umbrales para colorear la barra de nivel en la interfaz (en % de llenado)

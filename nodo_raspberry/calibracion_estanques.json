@@ -1,0 +1,22 @@
+{
+  "0": {
+    "estanque": "Estanque 2 (J18|P2)",
+    "vacio": 128,
+    "lleno": 46
+  },
+  "1": {
+    "estanque": "Estanque 4 (J19|P4)",
+    "vacio": 85,
+    "lleno": 46
+  },
+  "2": {
+    "estanque": "Estanque 1 (J20|P1 - Bypass)",
+    "vacio": 150,
+    "lleno": 46
+  },
+  "3": {
+    "estanque": "Estanque 3 (J21|P3)",
+    "vacio": 60,
+    "lleno": 46
+  }
+}

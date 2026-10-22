@@ -54,19 +54,19 @@ MUX_ADDRESS = 0x70
 MUX_RST_PIN = 17
 CANALES_SENSORES = [0, 1, 2, 3]
 
-DIST_VACIO_MM = 50
-DIST_LLENO_MM = 20
+DIST_VACIO_MM = 60
+DIST_LLENO_MM = 46
 
 # Geometría real por estanque según mediciones físicas (distancia sensor a fondo vs nivel alto)
-# Canal 0: Estanque 2 (J18, Bomba P2) - Vacío medido: ~128 mm, Lleno: 20 mm
-# Canal 1: Estanque 4 (J19, Bomba P4) - Vacío medido: ~82 mm,  Lleno: 15 mm
+# Canal 0: Estanque 2 (J18, Bomba P2) - Vacío medido: ~128 mm, Lleno calibrado: 46 mm
+# Canal 1: Estanque 4 (J19, Bomba P4) - Vacío medido: ~85 mm,  Lleno calibrado: 46 mm
 # Canal 2: Estanque 1 (J20, Bomba P1 - Sensor físico defectuoso / Bypass)
-# Canal 3: Estanque 3 (J21, Bomba P3) - Vacío medido: ~65 mm,  Lleno: 20 mm
+# Canal 3: Estanque 3 (J21, Bomba P3) - Vacío medido: ~60 mm,  Lleno calibrado: 46 mm
 GEOMETRIA_ESTANQUES = {
-    0: {"vacio": 128, "lleno": 20},  # Canal 0: Estanque 2
-    1: {"vacio": 82,  "lleno": 15},  # Canal 1: Estanque 4
-    2: {"vacio": 150, "lleno": 20},  # Canal 2: Estanque 1 (Bypass)
-    3: {"vacio": 65,  "lleno": 20},  # Canal 3: Estanque 3
+    0: {"vacio": 128, "lleno": 46},  # Canal 0: Estanque 2
+    1: {"vacio": 85,  "lleno": 46},  # Canal 1: Estanque 4
+    2: {"vacio": 150, "lleno": 46},  # Canal 2: Estanque 1 (Bypass)
+    3: {"vacio": 60,  "lleno": 46},  # Canal 3: Estanque 3
 }
 
 CALIB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibracion_estanques.json")
@@ -92,9 +92,10 @@ def calcular_pct_canal(canal, mm, dist_base=None):
     lleno = geom["lleno"]
     if vacio <= lleno:
         return 0.0
-    # Zona muerta de 2 mm contra ruido/vibraciones en reposo
-    if mm >= (vacio - 2):
+    # Zona muerta de 3 mm contra ruido/vibraciones en reposo (garantiza 0% cuando está libre)
+    if mm >= (vacio - 3):
         return 0.0
+    # Si la distancia medida es igual o menor a la distancia de lleno (o dedo cerca), salta inmediatamente a 100%
     if mm <= lleno:
         return 100.0
     pct = (vacio - mm) / (vacio - lleno) * 100.0
@@ -215,7 +216,7 @@ class HiloLectorSensores(threading.Thread):
                 with self.lock:
                     for i in range(4):
                         pct = self.hw.niveles_simulados[i]
-                        geom = GEOMETRIA_ESTANQUES.get(i, {"vacio": 50, "lleno": 20})
+                        geom = GEOMETRIA_ESTANQUES.get(i, {"vacio": DIST_VACIO_MM, "lleno": DIST_LLENO_MM})
                         vacio, lleno = geom["vacio"], geom["lleno"]
                         mm = int(vacio - (pct / 100.0) * (vacio - lleno))
                         self.hw._cache_distancias_mm[i] = max(lleno - 5, min(vacio + 10, mm))
@@ -329,9 +330,9 @@ class HardwareManager:
         # Se calibran automaticamente al inicio con la primera lectura valida de cada estanque
         self.distancias_base = {
             0: GEOMETRIA_ESTANQUES[0]["vacio"],  # ~128 mm (Estanque 2)
-            1: GEOMETRIA_ESTANQUES[1]["vacio"],  # ~82 mm  (Estanque 4)
+            1: GEOMETRIA_ESTANQUES[1]["vacio"],  # ~85 mm  (Estanque 4)
             2: GEOMETRIA_ESTANQUES[2]["vacio"],  # 150 mm  (Estanque 1 / Bypass)
-            3: GEOMETRIA_ESTANQUES[3]["vacio"],  # ~65 mm  (Estanque 3)
+            3: GEOMETRIA_ESTANQUES[3]["vacio"],  # ~60 mm  (Estanque 3)
         }
 
         # Cache compartida de lecturas en RAM (Opcion C)
@@ -441,9 +442,17 @@ class HardwareManager:
                                     pass
 
                             dist_test = sensor.range
+                            geom = GEOMETRIA_ESTANQUES.get(canal, {"vacio": DIST_VACIO_MM, "lleno": DIST_LLENO_MM})
                             if dist_test > 8000:
                                 self.estado_sensores[canal] = f"CONECTADO PERO FUERA DE RANGO ({dist_test} mm)"
                                 print(f"\r   [!] ADVERTENCIA: Responde I2C pero lectura fuera de rango ({dist_test} mm)\n")
+                            elif dist_test <= (geom["lleno"] + 4):
+                                # Obstáculo en arranque: no alterar la base vacía nominal
+                                self.distancias_base[canal] = geom["vacio"]
+                                self.estado_sensores[canal] = f"OPERATIVO (Obstaculo en arranque, Base Nominal: {geom['vacio']} mm)"
+                                print(f"\r   [!] OPERATIVO: Obstaculo en arranque ({dist_test} mm), usando base nominal {geom['vacio']} mm\n")
+                                self._cache_distancias_mm[canal] = dist_test
+                                self._cache_pct[canal] = calcular_pct_canal(canal, dist_test, dist_base=geom["vacio"])
                             else:
                                 self.distancias_base[canal] = dist_test
                                 self.estado_sensores[canal] = f"OPERATIVO (Calibrado Base: {dist_test} mm)"
@@ -834,7 +843,7 @@ class RtuHardwareGateway:
                 porcentajes_calculados = []
                 for i in range(4):
                     dist_cruda = distancias_crudas[i]
-                    geom = GEOMETRIA_ESTANQUES.get(i, {"vacio": 50, "lleno": 20})
+                    geom = GEOMETRIA_ESTANQUES.get(i, {"vacio": DIST_VACIO_MM, "lleno": DIST_LLENO_MM})
                     base_vacio = self.hw.distancias_base.get(i, geom["vacio"])
 
                     if i in self.hw.bypass_canales:
