@@ -262,6 +262,7 @@ class HiloLectorSensores(threading.Thread):
                         continue
 
                 sensores_habilitados += 1
+                time.sleep(0.01)  # 10 ms de pausa para asentamiento capacitivo del MUX entre canales
 
                 try:
                     # Lectura directa protegida con io_timeout_s interno (0.5s)
@@ -510,16 +511,52 @@ class HardwareManager:
 
     def reiniciar_bus_hardware(self):
         """
-        Reinicia el multiplexor TCA9548A por GPIO 17 y re-conecta sensores.
+        Recuperacion completa del bus I2C sin reiniciar la Raspberry Pi:
+        1. Desinicializa interfaz I2C previa.
+        2. Pulsa GPIO 17 para resetear por hardware el multiplexor TCA9548A.
+        3. Aplica 9 pulsos en SCL para destrabar lineas si un sensor retenia SDA.
+        4. Re-crea I2C, TCA9548A y reconecta sensores con pausas de asentamiento.
         """
         if not HARDWARE_REAL or self.skip_sensores: return
         try:
+            try:
+                if self.i2c:
+                    self.i2c.deinit()
+            except Exception:
+                pass
+
+            # 1. Reset por hardware del multiplexor TCA9548A (desconecta todos los canales)
             GPIO.setup(MUX_RST_PIN, GPIO.OUT, initial=GPIO.HIGH)
             GPIO.output(MUX_RST_PIN, GPIO.LOW)
-            time.sleep(0.03)
+            time.sleep(0.04)
             GPIO.output(MUX_RST_PIN, GPIO.HIGH)
-            time.sleep(0.08)
-            
+            time.sleep(0.1)
+
+            # 2. Rutina de 9 pulsos para desatascar SDA
+            PIN_SDA = 2
+            PIN_SCL = 3
+            try:
+                GPIO.setup(PIN_SDA, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+                GPIO.setup(PIN_SCL, GPIO.OUT, initial=GPIO.HIGH)
+                time.sleep(0.001)
+                for _ in range(9):
+                    GPIO.output(PIN_SCL, GPIO.LOW)
+                    time.sleep(0.00003)
+                    GPIO.output(PIN_SCL, GPIO.HIGH)
+                    time.sleep(0.00003)
+                # STOP condition: SDA LOW -> SCL HIGH -> SDA HIGH
+                GPIO.setup(PIN_SDA, GPIO.OUT, initial=GPIO.LOW)
+                time.sleep(0.00003)
+                GPIO.output(PIN_SCL, GPIO.HIGH)
+                time.sleep(0.00003)
+                GPIO.output(PIN_SDA, GPIO.HIGH)
+                time.sleep(0.00003)
+                GPIO.cleanup([PIN_SDA, PIN_SCL])
+                time.sleep(0.02)
+            except Exception:
+                pass
+
+            # 3. Re-crear bus y multiplexor
             try:
                 self.i2c = busio.I2C(board.SCL, board.SDA)
                 self.mux = adafruit_tca9548a.TCA9548A(self.i2c, address=MUX_ADDRESS)
@@ -527,9 +564,11 @@ class HardwareManager:
                 logger.error(f"[AUTO-RECUPERACION] Error re-inicializando bus/multiplexor: {e_bus}")
                 return
 
+            # 4. Reconexion con pausa de asentamiento
             for c in CANALES_SENSORES:
                 if c not in self.bypass_canales:
                     try:
+                        time.sleep(0.015)
                         sensor = VL53L0X(self.mux[c])
                         if hasattr(sensor, "io_timeout_s"):
                             sensor.io_timeout_s = 0.5
@@ -540,7 +579,7 @@ class HardwareManager:
                     except Exception as err:
                         self.sensores[c] = None
                         self.estado_sensores[c] = f"ERROR POST-RESET ({err})"
-            logger.info("[AUTO-RECUPERACION] Multiplexor TCA9548A y bus I2C re-inicializados correctamente.")
+            logger.info("[AUTO-RECUPERACION] Multiplexor TCA9548A y bus I2C re-inicializados correctamente sin reiniciar la Raspberry Pi.")
         except Exception as e:
             logger.error(f"[AUTO-RECUPERACION ERROR] Error reiniciando hardware MUX: {e}")
 
