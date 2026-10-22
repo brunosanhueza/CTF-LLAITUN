@@ -68,6 +68,15 @@ try:
             sensores[c] = s
         except Exception:
             sensores[c] = None
+            try:
+                GPIO.output(17, GPIO.LOW)
+                time.sleep(0.02)
+                GPIO.output(17, GPIO.HIGH)
+                time.sleep(0.05)
+                i2c = busio.I2C(board.SCL, board.SDA)
+                mux = adafruit_tca9548a.TCA9548A(i2c, address=0x70)
+            except Exception:
+                pass
 
     HARDWARE_REAL = True
 except Exception:

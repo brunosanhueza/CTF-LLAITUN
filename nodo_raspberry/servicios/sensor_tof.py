@@ -55,6 +55,12 @@ try:
             logger.info(f"Sensor ToF inicializado en canal {i}.")
         except Exception as e:
             logger.error(f"No se encontro sensor en canal {i}: {e}")
+            try:
+                reset_multiplexor()
+                i2c = busio.I2C(board.SCL, board.SDA)
+                _tca = adafruit_tca9548a.TCA9548A(i2c, address=0x70)
+            except Exception:
+                pass
 
     HARDWARE_AVAILABLE = any(s is not None for s in _sensores)
 except Exception as e:
