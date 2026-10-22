@@ -83,9 +83,12 @@ class BancoI2C:
                 raise SensorNoDetectadoError(
                     "No se detecto 0x29 en el canal %d del TCA9548A" % channel
                 )
-            # Mantener el mismo canal TCA y constructor que usa C3-PLC. El
-            # timeout debe quedar activo durante calibracion e inicializacion.
-            sensor = self.sensor_class(self.mux[channel], io_timeout_s=0.5)
+            # Mantener la llamada de C3-PLC: pasar solo el canal del TCA y
+            # configurar el timeout despues de crear el sensor. El supervisor
+            # del proceso hijo limita cualquier bloqueo durante inicializacion.
+            sensor = self.sensor_class(self.mux[channel])
+            if hasattr(sensor, "io_timeout_s"):
+                sensor.io_timeout_s = 0.5
             self.sensors[channel] = sensor
         distance = int(self.sensors[channel].range)
         if not 0 < distance < 8000:

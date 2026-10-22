@@ -13,25 +13,32 @@ muere el padre, mediante `PR_SET_PDEATHSIG`.
 ## Comportamiento
 
 - Se conservan el mapa de sensores, la calibracion y el bypass de CH2/J20.
-- Cada operacion debe producir progreso en menos de 8 segundos. Al excederlo,
+- Cada operacion debe producir progreso en menos de 4 segundos. Al excederlo,
   el supervisor solicita terminar al hijo, espera 0,5 s y escala a SIGKILL con
   otra espera de 0,5 s. Solo crea otro cuando ha recogido al anterior. Si el
   kernel no lo termina, queda degradado sin crear procesos adicionales.
-- El canal en el que se bloqueo queda en cuarentena por 60 s. El nuevo hijo
+- El canal en el que se bloqueo queda en cuarentena por 15 s. El nuevo hijo
   puede atender a los otros mientras tanto.
-- Hay como maximo 3 arranques por ventana movil de 300 s, contando tambien
-  intentos de arranque fallidos. Esperas entre intentos: 2, 4 y 8 segundos.
-  Agotado el presupuesto, se espera hasta recuperar una plaza en la ventana.
+- Hay como maximo 5 arranques por ventana movil de 30 s, contando tambien
+  intentos de arranque fallidos. Esperas entre intentos: 1, 2, 4 y 8 segundos.
+  Agotado el presupuesto, se espera hasta recuperar una plaza en la ventana
+  (hasta 30 s desde el primer intento).
+- Si el hijo sigue enviando latidos pero no consigue ninguna medicion valida
+  durante 20 s, el supervisor tambien lo reemplaza. Asi un lector que espera
+  internamente antes de volver a resetear el bus no queda vivo sin medir.
 - Antes de crear un sensor se busca su direccion 0x29 en el canal TCA, como en
   `C3-PLC/hal.py`. Si no aparece, ese canal se vuelve a buscar cada 3 s. Si el
   escaneo falla, se intenta igualmente el constructor del driver.
+- La creacion usa la llamada `VL53L0X(tca[channel])` del HAL anterior; luego
+  configura `io_timeout_s` si el driver expone esa propiedad. Si la calibracion
+  se bloquea durante el constructor, el supervisor termina el proceso a los 4 s.
 - Un error puntual de lectura se reintenta a los 0,5, 1 y 2 s. El objeto se
   conserva durante los dos primeros fallos y se recrea tras el tercero. Un
   fallo individual con otros sensores operativos no reinicia el bus entero.
 - Sin ninguna lectura valida durante 15 s, se intenta resetear el MUX y
   reconstruir el bus; tambien se hace si nunca se pudo inicializar un sensor.
-  Maximo 3 intentos de reset por ventana movil de 300 s por proceso lector. El reset inicial
-  consume un intento. La espera crece hasta 60 s.
+  El hijo limita los resets a 3 por ventana movil de 300 s y aumenta la espera
+  hasta 60 s; el supervisor lo reemplaza si completa 20 s sin mediciones.
 - Una medicion de mas de 4 s se marca OBSOLETO, aunque el hijo siga vivo.
   Se conserva el ultimo valor en memoria para diagnostico, con su timestamp.
 - El control no espera al hijo: consume una copia de RAM y sigue enviando

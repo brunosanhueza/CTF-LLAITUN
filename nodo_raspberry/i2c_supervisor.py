@@ -15,12 +15,14 @@ log = logging.getLogger(__name__)
 
 
 class SupervisorI2C(threading.Thread):
-    def __init__(self, bypass=(), *, command=None, timeout=8.0, stale=4.0,
-                 restart_window=300.0, max_starts=3, backoff=2.0):
+    def __init__(self, bypass=(), *, command=None, timeout=4.0, stale=4.0,
+                 data_timeout=20.0, restart_window=30.0, max_starts=5,
+                 backoff=1.0):
         super().__init__(name="supervisor-i2c", daemon=True)
         self.bypass = set(bypass)
         self.command = command or [sys.executable, "-u", str(Path(__file__).with_name("i2c_worker.py"))]
         self.timeout, self.stale = timeout, stale
+        self.data_timeout = data_timeout
         self.restart_window, self.max_starts, self.backoff = restart_window, max_starts, backoff
         self._stop_event = threading.Event()
         self._restart = threading.Event()
@@ -113,14 +115,18 @@ class SupervisorI2C(threading.Thread):
         os.set_blocking(p.stdout.fileno(), False)
         buffer = b""
         last_message = time.monotonic()
+        last_sample = last_message
         self._active_channel = None
         while not self._stop_event.is_set() and not self._restart.is_set():
             if p.poll() is not None:
                 raise RuntimeError("lector terminado (codigo %s)" % p.returncode)
-            if time.monotonic() - last_message > self.timeout:
+            now = time.monotonic()
+            if now - last_message > self.timeout:
                 if self._active_channel is not None:
-                    self._quarantine[self._active_channel] = time.monotonic() + 60.0
+                    self._quarantine[self._active_channel] = now + 15.0
                 raise TimeoutError("lector I2C sin progreso")
+            if now - last_sample > self.data_timeout:
+                raise TimeoutError("ningun sensor I2C entrega datos validos")
             ready, _, _ = select.select([p.stdout], [], [], 0.1)
             if not ready:
                 continue
@@ -132,8 +138,11 @@ class SupervisorI2C(threading.Thread):
                 raise ValueError("mensaje del lector demasiado grande")
             while b"\n" in buffer:
                 line, buffer = buffer.split(b"\n", 1)
-                self._message(json.loads(line))
+                message = json.loads(line)
+                self._message(message)
                 last_message = time.monotonic()
+                if message.get("kind") == "sample" and message.get("state") == "OK":
+                    last_sample = last_message
 
     def run(self):
         limited = False
@@ -152,7 +161,10 @@ class SupervisorI2C(threading.Thread):
                 if len(self._starts) >= self.max_starts:
                     self._invalidate("ESPERA", "Limite de reinicios alcanzado")
                     if not limited:
-                        log.warning("I2C: limite de reinicios; esperando antes de reintentar")
+                        log.warning(
+                            "I2C: %d arranques en %ds; esperando un cupo para reintentar",
+                            self.max_starts, int(self.restart_window),
+                        )
                         limited = True
                     self._stop_event.wait(min(1.0, self.restart_window - (now - self._starts[0])))
                     continue
