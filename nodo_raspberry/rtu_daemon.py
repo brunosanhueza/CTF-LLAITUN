@@ -521,6 +521,19 @@ class RtuHardwareGateway:
         Nunca abre I2C ni espera la recuperacion del proceso lector.
         """
         loop_counter = 0
+        ultima_telemetria = 0.0
+        telemetria_config = os.environ.get("RTU_TELEMETRIA")
+        if telemetria_config is None:
+            intervalo_telemetria = 10.0
+        elif telemetria_config.strip().lower() in ("", "0", "false", "no", "off"):
+            intervalo_telemetria = None
+        elif telemetria_config.strip().lower() in ("1", "true", "yes", "on"):
+            intervalo_telemetria = 2.0
+        else:
+            try:
+                intervalo_telemetria = max(1.0, float(telemetria_config))
+            except ValueError:
+                intervalo_telemetria = 10.0
         while self.corriendo:
             try:
                 self.hw.actualizar_simulacion(self._estado_bombas_local)
@@ -654,7 +667,10 @@ class RtuHardwareGateway:
                 if loop_counter == 1 or loop_counter % 30 == 0:
                     logger.info("Control activo: PLC=%s; sensores validos=%d/4 (incluye bypass)",
                                 self.cliente.is_open, len(canales_validos))
-                if os.environ.get("RTU_TELEMETRIA", "0") == "1" and (loop_counter == 1 or loop_counter % 2 == 0):
+                ahora_monotonic = time.monotonic()
+                if (intervalo_telemetria is not None and
+                        (loop_counter == 1 or ahora_monotonic - ultima_telemetria >= intervalo_telemetria)):
+                    ultima_telemetria = ahora_monotonic
                     ahora = time.strftime("%H:%M:%S")
                     print("\n" + "="*88)
                     print(f"[*] TELEMETRIA Y PRUEBA DE SENSORES EN TIEMPO REAL [{ahora}]")
