@@ -80,15 +80,20 @@ try:
     import RPi.GPIO as GPIO
 
     # Parche de seguridad para Adafruit VL53L0X:
-    # Previene el bucle infinito en _perform_single_ref_calibration
+    # Previene el bucle infinito en _perform_single_ref_calibration y limpia registros ST
     if hasattr(VL53L0X, "_perform_single_ref_calibration"):
         def _safe_perform_single_ref_calibration(self, vhv_init_byte):
-            self._write_u8(0x00, 0x01 | vhv_init_byte)
+            self._write_u8(0x00, 0x01 | (int(vhv_init_byte) & 0xFF))
             t_inicio = time.monotonic()
+            timeout = getattr(self, "io_timeout_s", 0)
+            if not timeout or timeout <= 0:
+                timeout = 1.2
             while (self._read_u8(0x13) & 0x07) == 0:
-                if time.monotonic() - t_inicio > 0.35:
+                if time.monotonic() - t_inicio > timeout:
                     raise RuntimeError("Timeout en calibracion interna VL53L0X")
                 time.sleep(0.005)
+            self._write_u8(0x0B, 0x01)
+            self._write_u8(0x00, 0x00)
         VL53L0X._perform_single_ref_calibration = _safe_perform_single_ref_calibration
 
     # Reset fisico del multiplexor TCA9548A mediante GPIO 17
@@ -96,9 +101,9 @@ try:
     GPIO.setwarnings(False)
     GPIO.setup(17, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.output(17, GPIO.LOW)
-    time.sleep(0.02)
+    time.sleep(0.03)
     GPIO.output(17, GPIO.HIGH)
-    time.sleep(0.05)
+    time.sleep(0.1)
 
     i2c = busio.I2C(board.SCL, board.SDA)
     mux = adafruit_tca9548a.TCA9548A(i2c, address=0x70)
@@ -112,7 +117,7 @@ try:
         try:
             sensor = VL53L0X(mux[c])
             if hasattr(sensor, "io_timeout_s"):
-                sensor.io_timeout_s = 0.25
+                sensor.io_timeout_s = 0.5
             if hasattr(sensor, "measurement_timing_budget"):
                 try:
                     sensor.measurement_timing_budget = 33000
@@ -209,7 +214,6 @@ def main():
     distancias_prev = {0: 50, 1: 50, 2: 50, 3: 50}
     sim_dist = {0: 50, 1: 50, 2: 50, 3: 50}
     sim_dir = {0: -2, 1: -1, 2: -3, 3: -2}
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="test_range")
 
     try:
         while True:
@@ -246,24 +250,15 @@ def main():
                             estado_str = f"{RED}[X] NO DETECTADO / DANIADO{RESET}"
                     else:
                         try:
-                            fut = executor.submit(getattr, sensor, "range")
-                            d = fut.result(timeout=0.35)
+                            d = sensor.range
                             if 0 < d < 2000:
                                 dist_mm = d
                             else:
                                 dist_mm = 8190
                                 estado_str = f"{YELLOW}[!] FUERA DE RANGO{RESET}"
-                        except concurrent.futures.TimeoutError:
+                        except Exception as err:
                             dist_mm = 8190
-                            estado_str = f"{RED}[X] TIMEOUT I2C{RESET}"
-                            try:
-                                executor.shutdown(wait=False)
-                            except Exception:
-                                pass
-                            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="test_range")
-                        except Exception:
-                            dist_mm = 8190
-                            estado_str = f"{RED}[X] ERROR I2C{RESET}"
+                            estado_str = f"{RED}[X] ERROR I2C ({err}){RESET}"
                 else:
                     # En modo simulación variamos automáticamente para mostrar el efecto visual
                     sim_dist[c] += sim_dir[c]

@@ -154,18 +154,25 @@ try:
     HARDWARE_REAL = True
 
     # Parche de seguridad para Adafruit VL53L0X:
-    # Elimina el bucle infinito sin timeout en _perform_single_ref_calibration que históricamente congelaba el programa.
+    # Elimina el bucle infinito sin timeout en _perform_single_ref_calibration
+    # y garantiza la limpieza obligatoria de registros ST (0x0B interrupt clear y 0x00 start).
     if hasattr(VL53L0X, "_perform_single_ref_calibration"):
         _orig_calib = VL53L0X._perform_single_ref_calibration
         def _safe_perform_single_ref_calibration(self, vhv_init_byte):
-            self._write_u8(0x00, 0x01 | vhv_init_byte)
+            self._write_u8(0x00, 0x01 | (int(vhv_init_byte) & 0xFF))
             t_inicio = time.monotonic()
+            timeout = getattr(self, "io_timeout_s", 0)
+            if not timeout or timeout <= 0:
+                timeout = 1.2
             while (self._read_u8(0x13) & 0x07) == 0:
-                if time.monotonic() - t_inicio > 0.35: # Timeout duro de 350ms
+                if time.monotonic() - t_inicio > timeout:
                     raise RuntimeError("Timeout en calibracion interna VL53L0X (sensor no respondio)")
                 time.sleep(0.005)
+            # Limpiar interrupciones y restaurar registro start (datasheet ST)
+            self._write_u8(0x0B, 0x01)
+            self._write_u8(0x00, 0x00)
         VL53L0X._perform_single_ref_calibration = _safe_perform_single_ref_calibration
-        logger.info("[PROTECCION I2C] Parche anti-cuelgue aplicado a VL53L0X._perform_single_ref_calibration")
+        logger.info("[PROTECCION I2C] Parche anti-cuelgue robusto aplicado a VL53L0X._perform_single_ref_calibration")
 except ImportError:
     HARDWARE_REAL = False
     logger.warning("Simulacion activa (RPi.GPIO / I2C no disponible).")
@@ -181,8 +188,7 @@ class HiloLectorSensores(threading.Thread):
     """
     OPCION C: Hilo en segundo plano exclusivo para interrogar sensores I2C de forma secuencial.
     Mantiene una cache en memoria de las ultimas lecturas validas para no bloquear Modbus.
-    OPCION B: Incorpora vigilancia de congelamiento de bus, hard timeout por sensor,
-    rutina de 9 pulsos para desatascar SDA y auto-reset por GPIO 17 con debounce.
+    Incorpora auto-deteccion en caliente de sensores desconectados y auto-recuperacion I2C.
     """
     def __init__(self, hw):
         super().__init__(daemon=True)
@@ -190,21 +196,8 @@ class HiloLectorSensores(threading.Thread):
         self.corriendo = True
         self.lock = threading.Lock()
         self.fallos_consecutivos = {0: 0, 1: 0, 2: 0, 3: 0}
+        self.ultimo_reintento = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0}
         self.bus_freeze_count = 0
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="i2c_range")
-
-    def _leer_rango_con_timeout(self, sensor, timeout_s=0.35):
-        """Lee el rango con timeout duro para garantizar que ningún bucle interno cuelgue este hilo."""
-        fut = self.executor.submit(getattr, sensor, "range")
-        try:
-            return fut.result(timeout=timeout_s)
-        except concurrent.futures.TimeoutError:
-            try:
-                self.executor.shutdown(wait=False)
-            except Exception:
-                pass
-            self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="i2c_range")
-            raise TimeoutError(f"Hard timeout I2C ({timeout_s}s) superado")
 
     def _calcular_pct(self, canal, mm):
         base = self.hw.distancias_base.get(canal, None)
@@ -226,7 +219,8 @@ class HiloLectorSensores(threading.Thread):
                 time.sleep(0.2)
                 continue
 
-            # Modo Hardware Real: barrido secuencial síncrono en este hilo (evita colisiones en bus I2C)
+            # Modo Hardware Real: barrido secuencial síncrono en este único hilo (evita colisiones I2C)
+            self.hw.ultimo_latido_sensores = time.monotonic()
             lecturas_validas = 0
             sensores_habilitados = 0
 
@@ -244,13 +238,34 @@ class HiloLectorSensores(threading.Thread):
 
                 sensor = self.hw.sensores[c]
                 if sensor is None:
-                    continue
+                    # Auto-reconexion en caliente cada 2.5s para sensores desconectados o no listos en arranque
+                    ahora = time.monotonic()
+                    if ahora - self.ultimo_reintento.get(c, 0.0) >= 2.5:
+                        self.ultimo_reintento[c] = ahora
+                        try:
+                            s = VL53L0X(self.hw.mux[c])
+                            if hasattr(s, "io_timeout_s"):
+                                s.io_timeout_s = 0.5
+                            if hasattr(s, "measurement_timing_budget"):
+                                try:
+                                    s.measurement_timing_budget = 33000
+                                except Exception:
+                                    pass
+                            self.hw.sensores[c] = s
+                            sensor = s
+                            self.fallos_consecutivos[c] = 0
+                            self.hw.estado_sensores[c] = "OPERATIVO (Reconectado)"
+                            logger.info(f"[AUTO-RECONEXION] Sensor en canal {c} ({MAPA_SENSORES_INFO.get(c, {}).get('estanque')}) conectado exitosamente!")
+                        except Exception:
+                            pass
+                    if sensor is None:
+                        continue
 
                 sensores_habilitados += 1
 
                 try:
-                    # Lectura protegida con Hard Timeout (máximo 350 ms)
-                    dist = self._leer_rango_con_timeout(sensor, timeout_s=0.35)
+                    # Lectura directa protegida con io_timeout_s interno (0.5s)
+                    dist = sensor.range
                     base = self.hw.distancias_base.get(c, None)
                     if 0 < dist < 8000:
                         pct = calcular_pct_canal(c, dist, dist_base=base)
@@ -277,14 +292,17 @@ class HiloLectorSensores(threading.Thread):
                         self.hw._cache_pct[c] = 0.0
                         self.hw.estado_sensores[c] = f"ERROR LECTURA ({e})"
 
-                    # Auto-recuperación individual del canal si falla 3 veces seguidas
-                    if self.fallos_consecutivos[c] >= 3:
+                    # Auto-recuperación individual del canal si falla 4 veces seguidas
+                    if self.fallos_consecutivos[c] >= 4:
                         try:
                             sensor_recup = VL53L0X(self.hw.mux[c])
                             if hasattr(sensor_recup, "io_timeout_s"):
-                                sensor_recup.io_timeout_s = 0.25
+                                sensor_recup.io_timeout_s = 0.5
                             if hasattr(sensor_recup, "measurement_timing_budget"):
-                                sensor_recup.measurement_timing_budget = 33000
+                                try:
+                                    sensor_recup.measurement_timing_budget = 33000
+                                except Exception:
+                                    pass
                             self.hw.sensores[c] = sensor_recup
                             self.fallos_consecutivos[c] = 0
                             logger.info(f"[AUTO-RECUPERACION] Sensor en canal {c} recuperado exitosamente.")
@@ -307,7 +325,7 @@ class HiloLectorSensores(threading.Thread):
             else:
                 self.bus_freeze_count = 0
 
-            time.sleep(0.12)
+            time.sleep(0.08)
 
 
 
@@ -400,9 +418,9 @@ class HardwareManager:
                     # Reset inicial de hardware del multiplexor TCA9548A por GPIO 17
                     GPIO.setup(MUX_RST_PIN, GPIO.OUT, initial=GPIO.HIGH)
                     GPIO.output(MUX_RST_PIN, GPIO.LOW)
-                    time.sleep(0.02)
+                    time.sleep(0.03)
                     GPIO.output(MUX_RST_PIN, GPIO.HIGH)
-                    time.sleep(0.05)
+                    time.sleep(0.1)
 
                     self.i2c = busio.I2C(board.SCL, board.SDA)
                     self.mux = adafruit_tca9548a.TCA9548A(self.i2c, address=MUX_ADDRESS)
@@ -430,25 +448,33 @@ class HardwareManager:
 
                         print(f"   -> Verificando comunicacion I2C...", end="", flush=True)
 
-                        try:
-                            sensor = VL53L0X(self.mux[canal])
-                            if hasattr(sensor, "io_timeout_s"):
-                                sensor.io_timeout_s = 0.25
-                            if hasattr(sensor, "measurement_timing_budget"):
-                                try:
-                                    sensor.measurement_timing_budget = 33000
-                                except Exception:
-                                    pass
+                        sensor = None
+                        ultimo_err = None
+                        for intento in range(2):
+                            try:
+                                sensor = VL53L0X(self.mux[canal])
+                                if hasattr(sensor, "io_timeout_s"):
+                                    sensor.io_timeout_s = 0.5
+                                if hasattr(sensor, "measurement_timing_budget"):
+                                    try:
+                                        sensor.measurement_timing_budget = 33000
+                                    except Exception:
+                                        pass
+                                break
+                            except Exception as e_init:
+                                ultimo_err = e_init
+                                time.sleep(0.08)
 
+                        if sensor is not None:
                             self.sensores[canal] = sensor
                             base = GEOMETRIA_ESTANQUES.get(canal, {}).get("vacio", 128.0)
                             self.distancias_base[canal] = base
                             self.estado_sensores[canal] = f"OPERATIVO (Base Nominal: {base} mm)"
                             print(f"\r   [+] OPERATIVO: Sensor OK | Medida base nominal: {base} mm\n")
-                        except Exception as e:
+                        else:
                             self.sensores[canal] = None
-                            self.estado_sensores[canal] = f"FALLO CRITICO: Error I2C ({e})"
-                            print(f"\r   [X] FALLO CRITICO: Error I2C ({e}). Sensor inoperativo en bornera {born}.\n")
+                            self.estado_sensores[canal] = f"FALLO I2C ({ultimo_err})"
+                            print(f"\r   [!] AVISO: Sensor no respondio ({ultimo_err}). Se auto-conectara en caliente.\n")
                             # Si falla, reset del multiplexor para que el canal no contamine a los siguientes
                             try:
                                 GPIO.output(MUX_RST_PIN, GPIO.LOW)
@@ -506,7 +532,7 @@ class HardwareManager:
                     try:
                         sensor = VL53L0X(self.mux[c])
                         if hasattr(sensor, "io_timeout_s"):
-                            sensor.io_timeout_s = 0.25
+                            sensor.io_timeout_s = 0.5
                         if hasattr(sensor, "measurement_timing_budget"):
                             sensor.measurement_timing_budget = 33000
                         self.sensores[c] = sensor
@@ -525,11 +551,7 @@ class HardwareManager:
         try:
             if hasattr(self, "hilo_sensores") and self.hilo_sensores.is_alive():
                 self.hilo_sensores.corriendo = False
-                if hasattr(self.hilo_sensores, "executor"):
-                    try:
-                        self.hilo_sensores.executor.shutdown(wait=False)
-                    except Exception:
-                        pass
+                self.hilo_sensores.join(timeout=0.5)
         except Exception:
             pass
 
@@ -774,7 +796,7 @@ class RtuHardwareGateway:
                 # Si el hilo I2C sufre un bloqueo prolongado, se recupera el bus y se reinicia el hilo en caliente
                 if HARDWARE_REAL and not self.hw.skip_sensores:
                     tiempo_sin_latido = time.monotonic() - getattr(self.hw, "ultimo_latido_sensores", time.monotonic())
-                    if tiempo_sin_latido > 3.0:
+                    if tiempo_sin_latido > 6.0:
                         logger.warning(f"[WATCHDOG HILO SENSORES] Hilo I2C congelado (sin respuesta hace {tiempo_sin_latido:.1f}s). Recuperando...")
                         self.hw.reiniciar_bus_hardware()
                         self.hw.reiniciar_hilo_sensores()
@@ -989,7 +1011,7 @@ if __name__ == "__main__":
             bypass = []
 
     print("==================================================")
-    print("  INICIANDO TEST DAEMON (MODO DIAGNOSTICO) - AGUAS DEL VALLE S.A.  ")
+    print("  INICIANDO DAEMON RTU - AGUAS DEL VALLE S.A.  ")
     print("==================================================")
     
     gateway = RtuHardwareGateway(skip_sensores=skip, bypass_canales=bypass)
