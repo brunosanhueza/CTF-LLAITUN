@@ -7,6 +7,8 @@ import sys
 import threading
 import time
 
+SAMPLE_PERIOD_S = 0.5  # Igual que C3-PLC; el nivel del agua cambia lentamente.
+
 
 def emit(kind, **values):
     print(json.dumps({"kind": kind, **values}), flush=True)
@@ -87,6 +89,10 @@ class BancoI2C:
             # configurar el timeout despues de crear el sensor. El supervisor
             # del proceso hijo limita cualquier bloqueo durante inicializacion.
             sensor = self.sensor_class(self.mux[channel])
+            if hasattr(sensor, "measurement_timing_budget"):
+                # Mismo ajuste usado por los diagnosticos antiguos. 33 ms es
+                # tambien el valor por defecto documentado por Adafruit.
+                sensor.measurement_timing_budget = 33000
             if hasattr(sensor, "io_timeout_s"):
                 sensor.io_timeout_s = 0.5
             self.sensors[channel] = sensor
@@ -169,7 +175,7 @@ def run(config, stop, bank_factory=BancoI2C, send=emit):
                         retry[c] = time.monotonic() + delay
                     send("sample", channel=c, state="ERROR", error=str(exc)[:200])
             send("heartbeat")
-            stop.wait(0.2)
+            stop.wait(SAMPLE_PERIOD_S)
     finally:
         if bank is not None:
             bank.close()

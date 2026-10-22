@@ -13,6 +13,11 @@ muere el padre, mediante `PR_SET_PDEATHSIG`.
 ## Comportamiento
 
 - Se conservan el mapa de sensores, la calibracion y el bypass de CH2/J20.
+- El lector espera 0,5 s entre rondas, igual que `C3-PLC`; el intervalo reduce
+  el sondeo del bus y mantiene una respuesta adecuada para niveles de agua.
+- Cada VL53L0X recibe el mismo presupuesto de medicion de 33 ms y el mismo
+  timeout I2C de 0,5 s. Las distancias vacio/lleno siguen siendo propias de
+  cada estanque.
 - Cada operacion debe producir progreso en menos de 4 segundos. Al excederlo,
   el supervisor solicita terminar al hijo, espera 0,5 s y escala a SIGKILL con
   otra espera de 0,5 s. Solo crea otro cuando ha recogido al anterior. Si el
