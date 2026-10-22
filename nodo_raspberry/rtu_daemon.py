@@ -952,7 +952,7 @@ class RtuHardwareGateway:
                     else:
                         # Fuera de rango o lectura inválida: limpiar historial para que el obstáculo no quede pegado
                         self.historial_distancias[i].clear()
-                        promedio = base_vacio if not self.hw.skip_sensores else dist_cruda
+                        promedio = int(round(base_vacio if not self.hw.skip_sensores else dist_cruda))
                         pct = 0.0
 
                     distancias_suavizadas.append(promedio)
@@ -988,6 +988,8 @@ class RtuHardwareGateway:
                         distancias_suavizadas[3], pct_p3,  # HR 25 (RAW), HR 26 (PCT)
                         distancias_suavizadas[1], pct_p4   # HR 27 (RAW), HR 28 (PCT)
                     ]
+                    # Conversión estricta a enteros de 16 bits para pyModbusTCP en Python 3.13
+                    registros_sensores = [max(0, min(65535, int(round(x)))) for x in registros_sensores]
                     self.cliente.write_multiple_registers(21, registros_sensores)
                     self.cliente.write_single_register(41, 0)
 
