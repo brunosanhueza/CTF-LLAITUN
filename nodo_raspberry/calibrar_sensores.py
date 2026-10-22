@@ -25,10 +25,10 @@ CALIB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibraci
 
 # Mapa de estanques según borneras físicas
 ESTANQUES = [
-    {"canal": 0, "nombre": "Estanque 2", "bornera": "J18", "bomba": "P2", "default_vacio": 128, "default_lleno": 46},
-    {"canal": 3, "nombre": "Estanque 3", "bornera": "J21", "bomba": "P3", "default_vacio": 60,  "default_lleno": 46},
-    {"canal": 1, "nombre": "Estanque 4", "bornera": "J19", "bomba": "P4", "default_vacio": 85,  "default_lleno": 46},
-    {"canal": 2, "nombre": "Estanque 1", "bornera": "J20", "bomba": "P1", "default_vacio": 150, "default_lleno": 46, "bypass": True},
+    {"canal": 0, "nombre": "Estanque 2", "bornera": "J18", "bomba": "P2", "default_vacio": 128.0, "default_lleno": 94.25},
+    {"canal": 3, "nombre": "Estanque 3", "bornera": "J21", "bomba": "P3", "default_vacio": 60.0,  "default_lleno": 38.0},
+    {"canal": 1, "nombre": "Estanque 4", "bornera": "J19", "bomba": "P4", "default_vacio": 85.0,  "default_lleno": 51.25},
+    {"canal": 2, "nombre": "Estanque 1", "bornera": "J20", "bomba": "P1", "default_vacio": 150.0, "default_lleno": 116.25, "bypass": True},
 ]
 
 # Inicialización de hardware
@@ -83,10 +83,10 @@ def cargar_calibracion():
             pass
     # Por defecto
     return {
-        "0": {"vacio": 128, "lleno": 46, "estanque": "Estanque 2 (J18)"},
-        "1": {"vacio": 85,  "lleno": 46, "estanque": "Estanque 4 (J19)"},
-        "2": {"vacio": 150, "lleno": 46, "estanque": "Estanque 1 (J20 - Bypass)"},
-        "3": {"vacio": 60,  "lleno": 46, "estanque": "Estanque 3 (J21)"},
+        "0": {"vacio": 128.0, "lleno": 94.25, "estanque": "Estanque 2 (J18)"},
+        "1": {"vacio": 85.0,  "lleno": 51.25, "estanque": "Estanque 4 (J19)"},
+        "2": {"vacio": 150.0, "lleno": 116.25,"estanque": "Estanque 1 (J20 - Bypass)"},
+        "3": {"vacio": 60.0,  "lleno": 38.0,  "estanque": "Estanque 3 (J21)"},
     }
 
 

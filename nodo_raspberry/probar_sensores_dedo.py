@@ -32,10 +32,10 @@ CANALES_MAPA = [
 
 # Configuración de Geometría por Estanque
 GEOMETRIA_CANALES = {
-    0: (128, 46),   # Estanque 2 (J18, P2) - Vacio: 128mm, Lleno: 46mm
-    1: (85, 46),    # Estanque 4 (J19, P4) - Vacio: 85mm,  Lleno: 46mm
-    2: (150, 46),   # Estanque 1 (J20, P1) - Vacio: 150mm, Lleno: 46mm (Sensor dañado)
-    3: (60, 46),    # Estanque 3 (J21, P3) - Vacio: 60mm,  Lleno: 46mm
+    0: (128.0, 94.25),   # Estanque 2 (J18, P2) - 101mm = 80.0%, Lleno = 94.25mm
+    1: (85.0,  51.25),   # Estanque 4 (J19, P4) - 58mm = 80.0%, Lleno = 51.25mm
+    2: (150.0, 116.25),  # Estanque 1 (J20, P1) - Bypass
+    3: (60.0,  38.0),    # Estanque 3 (J21, P3) - 42mm = 81.8%, Lleno = 38mm
 }
 
 CALIB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibracion_estanques.json")
@@ -47,8 +47,8 @@ if os.path.exists(CALIB_FILE):
             for k, v in _calib.items():
                 c = int(k)
                 if c in GEOMETRIA_CANALES:
-                    vac = int(v.get("vacio", GEOMETRIA_CANALES[c][0]))
-                    lle = int(v.get("lleno", GEOMETRIA_CANALES[c][1]))
+                    vac = float(v.get("vacio", GEOMETRIA_CANALES[c][0]))
+                    lle = float(v.get("lleno", GEOMETRIA_CANALES[c][1]))
                     GEOMETRIA_CANALES[c] = (vac, lle)
     except Exception:
         pass
@@ -190,9 +190,8 @@ def main():
             if s is not None and c != 2:
                 try:
                     d = s.range
-                    # Solo actualizar base si no hay un obstáculo/dedo pegado al sensor en arranque
-                    lim_lleno = GEOMETRIA_CANALES[c][1]
-                    if (lim_lleno + 6) < d < 2000:
+                    # Solo auto-tarar si la lectura inicial está cerca del vacío nominal (+- 8 mm)
+                    if abs(d - GEOMETRIA_CANALES[c][0]) <= 8:
                         distancias_base[c] = d
                 except Exception:
                     pass

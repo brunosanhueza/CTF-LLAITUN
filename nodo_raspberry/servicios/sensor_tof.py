@@ -11,10 +11,10 @@ PIN_MUX_RESET = 17
 CANALES_BYPASS = [2]  # Canal 2 (Estanque 1 / Bornera J20) averiado fisicamente; omitir
 
 GEOMETRIA_ESTANQUES = {
-    0: {"vacio_mm": 128, "lleno_mm": 46, "nombre": "Estanque 2 (Canal 0)"},
-    1: {"vacio_mm": 85,  "lleno_mm": 46, "nombre": "Estanque 4 (Canal 1)"},
-    2: {"vacio_mm": 150, "lleno_mm": 46, "nombre": "Estanque 1 (Canal 2 / BYPASS)"},
-    3: {"vacio_mm": 60,  "lleno_mm": 46, "nombre": "Estanque 3 (Canal 3)"},
+    0: {"vacio_mm": 128.0, "lleno_mm": 94.25, "nombre": "Estanque 2 (Canal 0)"},
+    1: {"vacio_mm": 85.0,  "lleno_mm": 51.25, "nombre": "Estanque 4 (Canal 1)"},
+    2: {"vacio_mm": 150.0, "lleno_mm": 116.25,"nombre": "Estanque 1 (Canal 2 / BYPASS)"},
+    3: {"vacio_mm": 60.0,  "lleno_mm": 38.0,  "nombre": "Estanque 3 (Canal 3)"},
 }
 
 def reset_multiplexor():

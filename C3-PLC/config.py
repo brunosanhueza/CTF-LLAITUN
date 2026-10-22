@@ -182,10 +182,10 @@ DISTANCIA_ESTANQUE_LLENO_MM = 46    # lectura con el estanque lleno (calibrado a
 # a mano en cada tanque. Sensor mirando hacia abajo: MENOS distancia = MAS
 # agua (al reves que el fallback generico de arriba).
 GEOMETRIA_ESTANQUES = {
-    "P1": (150, 46),
-    "P2": (128, 46),
-    "P3": (60, 46),
-    "P4": (85, 46),
+    "P1": (150.0, 116.25),
+    "P2": (128.0, 94.25),   # 101 mm = 80.0%, 94.25 mm = 100.0%
+    "P3": (60.0,  38.0),    # 42.4 mm = 80.0%, 38.0 mm = 100.0%
+    "P4": (85.0,  51.25),   # 58.0 mm = 80.0%, 51.25 mm = 100.0%
 }
 
 # Umbrales para colorear la barra de nivel en la interfaz (en % de llenado)

@@ -57,16 +57,16 @@ CANALES_SENSORES = [0, 1, 2, 3]
 DIST_VACIO_MM = 60
 DIST_LLENO_MM = 46
 
-# Geometría real por estanque según mediciones físicas (distancia sensor a fondo vs nivel alto)
-# Canal 0: Estanque 2 (J18, Bomba P2) - Vacío medido: ~128 mm, Lleno calibrado: 46 mm
-# Canal 1: Estanque 4 (J19, Bomba P4) - Vacío medido: ~85 mm,  Lleno calibrado: 46 mm
+# Geometría real por estanque rectificada según escala del PLC (80% límite en 101 mm para Estanque 2)
+# Canal 0: Estanque 2 (J18, Bomba P2) - Vacío: 128 mm, 80%: 101 mm, Lleno (100%): 94.25 mm (Delta 33.75 mm)
+# Canal 1: Estanque 4 (J19, Bomba P4) - Vacío: 85 mm,  80%: 58 mm,  Lleno (100%): 51.25 mm (Delta 33.75 mm)
 # Canal 2: Estanque 1 (J20, Bomba P1 - Sensor físico defectuoso / Bypass)
-# Canal 3: Estanque 3 (J21, Bomba P3) - Vacío medido: ~60 mm,  Lleno calibrado: 46 mm
+# Canal 3: Estanque 3 (J21, Bomba P3) - Vacío: 60 mm,  80%: 42.4 mm, Lleno (100%): 38.0 mm (Delta 22 mm)
 GEOMETRIA_ESTANQUES = {
-    0: {"vacio": 128, "lleno": 46},  # Canal 0: Estanque 2
-    1: {"vacio": 85,  "lleno": 46},  # Canal 1: Estanque 4
-    2: {"vacio": 150, "lleno": 46},  # Canal 2: Estanque 1 (Bypass)
-    3: {"vacio": 60,  "lleno": 46},  # Canal 3: Estanque 3
+    0: {"vacio": 128.0, "lleno": 94.25},  # Canal 0: Estanque 2 (101 mm = 80.0%)
+    1: {"vacio": 85.0,  "lleno": 51.25},  # Canal 1: Estanque 4 (58 mm = 80.0%)
+    2: {"vacio": 150.0, "lleno": 116.25}, # Canal 2: Estanque 1 (Bypass)
+    3: {"vacio": 60.0,  "lleno": 38.0},   # Canal 3: Estanque 3 (42 mm = 81.8%)
 }
 
 CALIB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibracion_estanques.json")
@@ -78,8 +78,8 @@ if os.path.exists(CALIB_FILE):
             for k, v in _calib.items():
                 c = int(k)
                 if c in GEOMETRIA_ESTANQUES:
-                    if "vacio" in v: GEOMETRIA_ESTANQUES[c]["vacio"] = int(v["vacio"])
-                    if "lleno" in v: GEOMETRIA_ESTANQUES[c]["lleno"] = int(v["lleno"])
+                    if "vacio" in v: GEOMETRIA_ESTANQUES[c]["vacio"] = float(v["vacio"])
+                    if "lleno" in v: GEOMETRIA_ESTANQUES[c]["lleno"] = float(v["lleno"])
         logger.info(f"Geometria calibrada cargada desde {CALIB_FILE}")
     except Exception as e:
         logger.warning(f"No se pudo cargar {CALIB_FILE}: {e}")
@@ -88,12 +88,12 @@ def calcular_pct_canal(canal, mm, dist_base=None):
     if mm is None or mm >= 8000 or mm <= 0:
         return 0.0
     geom = GEOMETRIA_ESTANQUES.get(canal, {"vacio": DIST_VACIO_MM, "lleno": DIST_LLENO_MM})
-    vacio = dist_base if dist_base is not None else geom["vacio"]
-    lleno = geom["lleno"]
+    vacio = float(dist_base if dist_base is not None else geom["vacio"])
+    lleno = float(geom["lleno"])
     if vacio <= lleno:
         return 0.0
-    # Zona muerta de 3 mm contra ruido/vibraciones en reposo (garantiza 0% cuando está libre)
-    if mm >= (vacio - 3):
+    # Zona muerta de 2 mm contra ruido/vibraciones en reposo (garantiza 0% cuando está libre)
+    if mm >= (vacio - 2):
         return 0.0
     # Si la distancia medida es igual o menor a la distancia de lleno (o dedo cerca), salta inmediatamente a 100%
     if mm <= lleno:
@@ -446,11 +446,11 @@ class HardwareManager:
                             if dist_test > 8000:
                                 self.estado_sensores[canal] = f"CONECTADO PERO FUERA DE RANGO ({dist_test} mm)"
                                 print(f"\r   [!] ADVERTENCIA: Responde I2C pero lectura fuera de rango ({dist_test} mm)\n")
-                            elif dist_test <= (geom["lleno"] + 4):
-                                # Obstáculo en arranque: no alterar la base vacía nominal
+                            elif abs(dist_test - geom["vacio"]) > 8:
+                                # Nivel de agua u obstáculo presente en arranque: no alterar la base vacía nominal
                                 self.distancias_base[canal] = geom["vacio"]
-                                self.estado_sensores[canal] = f"OPERATIVO (Obstaculo en arranque, Base Nominal: {geom['vacio']} mm)"
-                                print(f"\r   [!] OPERATIVO: Obstaculo en arranque ({dist_test} mm), usando base nominal {geom['vacio']} mm\n")
+                                self.estado_sensores[canal] = f"OPERATIVO (Nivel/Obstaculo en arranque, Base Nominal: {geom['vacio']} mm)"
+                                print(f"\r   [!] OPERATIVO: Nivel en arranque ({dist_test} mm), usando base nominal {geom['vacio']} mm\n")
                                 self._cache_distancias_mm[canal] = dist_test
                                 self._cache_pct[canal] = calcular_pct_canal(canal, dist_test, dist_base=geom["vacio"])
                             else:
