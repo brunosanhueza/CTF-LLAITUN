@@ -191,6 +191,7 @@ class HiloLectorSensores(threading.Thread):
         self.lock = threading.Lock()
         self.fallos_consecutivos = {0: 0, 1: 0, 2: 0, 3: 0}
         self.bus_freeze_count = 0
+        self.ultimo_reintento_desconectados = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0}
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="i2c_range")
 
     def _leer_rango_con_timeout(self, sensor, timeout_s=0.35):
@@ -244,7 +245,21 @@ class HiloLectorSensores(threading.Thread):
 
                 sensor = self.hw.sensores[c]
                 if sensor is None:
-                    continue
+                    # Intento periodico de reconexion en caliente cada 5 segundos si el sensor se desenchufo o fallo en arranque
+                    ahora = time.monotonic()
+                    if ahora - self.ultimo_reintento_desconectados.get(c, 0.0) > 5.0:
+                        self.ultimo_reintento_desconectados[c] = ahora
+                        try:
+                            sensor_recup, dist_test, _ = self.hw._conectar_sensor_con_aislamiento(c, max_intentos=1)
+                            if sensor_recup is not None:
+                                self.hw.sensores[c] = sensor_recup
+                                sensor = sensor_recup
+                                self.fallos_consecutivos[c] = 0
+                                logger.info(f"[AUTO-RECONEXION] Sensor en canal {c} ({MAPA_SENSORES_INFO.get(c, {}).get('estanque')}) reconectado en caliente!")
+                        except Exception:
+                            pass
+                    if sensor is None:
+                        continue
 
                 sensores_habilitados += 1
 
@@ -584,25 +599,32 @@ class HardwareManager:
     def _conectar_un_sensor_directo(self, canal):
         """Intento individual de instanciación y primera lectura en un canal."""
         try:
-            sensor = VL53L0X(self.mux[canal], io_timeout_s=0.35)
+            sensor = VL53L0X(self.mux[canal], io_timeout_s=0.6)
         except TypeError:
             sensor = VL53L0X(self.mux[canal])
             if hasattr(sensor, "io_timeout_s"):
-                sensor.io_timeout_s = 0.35
+                sensor.io_timeout_s = 0.6
 
         if hasattr(sensor, "measurement_timing_budget"):
             try:
-                sensor.measurement_timing_budget = 33000
+                sensor.measurement_timing_budget = 40000
             except Exception:
                 pass
 
-        dist = sensor.range
+        try:
+            dist = sensor.range
+        except Exception:
+            # Si el sensor respondió por I2C en __init__ pero falló el primer disparo láser,
+            # no descartar el sensor; usar la distancia nominal de reposo
+            geom = GEOMETRIA_ESTANQUES.get(canal, {"vacio": DIST_VACIO_MM, "lleno": DIST_LLENO_MM})
+            dist = geom["vacio"]
+
         return sensor, dist
 
     def _conectar_sensor_con_aislamiento(self, canal, max_intentos=2):
         """
         Conecta un sensor en el canal especificado protegiendo contra cuelgues I2C.
-        Si falla o excede el timeout (850ms), aplica rutina de 9 pulsos NXP,
+        Si falla o excede el timeout (1.5s), aplica rutina de 9 pulsos NXP,
         resetea el MUX por GPIO 17 para aislar el canal y reintenta.
         Si tras los intentos falla, aísla el canal definitivamente y refresca el bus
         para que NO afecte a los demás canales.
@@ -615,11 +637,11 @@ class HardwareManager:
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"probe_ch{canal}")
             try:
                 fut = executor.submit(self._conectar_un_sensor_directo, canal)
-                sensor, dist = fut.result(timeout=0.85)
+                sensor, dist = fut.result(timeout=1.5)
                 executor.shutdown(wait=False)
                 return sensor, dist, None
             except concurrent.futures.TimeoutError:
-                ultimo_err = "Timeout I2C (>850ms)"
+                ultimo_err = "Timeout I2C (>1.5s)"
                 executor.shutdown(wait=False)
             except Exception as e:
                 ultimo_err = str(e)
