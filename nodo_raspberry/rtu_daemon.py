@@ -706,6 +706,11 @@ class RtuHardwareGateway:
                             est_txt = f"MIDIENDO  [{barra_ascii}] {p_pct:5.1f}% ({int(round(d)):2d} mm) {dedo_tag}"
                         
                         print(f" * {est:<11} ({born}|{p}): {est_txt} | Bomba: {bomba_txt}")
+                        if (not self.hw.skip_sensores
+                                and snapshot[ch]["state"] == "ERROR"
+                                and snapshot[ch].get("error")):
+                            detalle_i2c = " ".join(str(snapshot[ch]["error"]).split())[:160]
+                            print(f"     Diagnostico I2C CH{ch}: {detalle_i2c}")
 
                     print("-"*88)
                     plc_status_str = "CONECTADO OK" if self.cliente.is_open else "DESCONECTADO (Reintentando...)"
