@@ -191,7 +191,6 @@ class HiloLectorSensores(threading.Thread):
         self.lock = threading.Lock()
         self.fallos_consecutivos = {0: 0, 1: 0, 2: 0, 3: 0}
         self.bus_freeze_count = 0
-        self.ultimo_reintento_desconectados = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0}
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="i2c_range")
 
     def _leer_rango_con_timeout(self, sensor, timeout_s=0.35):
@@ -245,21 +244,7 @@ class HiloLectorSensores(threading.Thread):
 
                 sensor = self.hw.sensores[c]
                 if sensor is None:
-                    # Intento periodico de reconexion en caliente cada 5 segundos si el sensor se desenchufo o fallo en arranque
-                    ahora = time.monotonic()
-                    if ahora - self.ultimo_reintento_desconectados.get(c, 0.0) > 5.0:
-                        self.ultimo_reintento_desconectados[c] = ahora
-                        try:
-                            sensor_recup, dist_test, _ = self.hw._conectar_sensor_con_aislamiento(c, max_intentos=1)
-                            if sensor_recup is not None:
-                                self.hw.sensores[c] = sensor_recup
-                                sensor = sensor_recup
-                                self.fallos_consecutivos[c] = 0
-                                logger.info(f"[AUTO-RECONEXION] Sensor en canal {c} ({MAPA_SENSORES_INFO.get(c, {}).get('estanque')}) reconectado en caliente!")
-                        except Exception:
-                            pass
-                    if sensor is None:
-                        continue
+                    continue
 
                 sensores_habilitados += 1
 
@@ -295,11 +280,14 @@ class HiloLectorSensores(threading.Thread):
                     # Auto-recuperación individual del canal si falla 3 veces seguidas
                     if self.fallos_consecutivos[c] >= 3:
                         try:
-                            sensor_recup, dist_recup, _ = self.hw._conectar_sensor_con_aislamiento(c, max_intentos=1)
-                            if sensor_recup is not None:
-                                self.hw.sensores[c] = sensor_recup
-                                self.fallos_consecutivos[c] = 0
-                                logger.info(f"[AUTO-RECUPERACION] Sensor en canal {c} recuperado exitosamente ({dist_recup} mm).")
+                            sensor_recup = VL53L0X(self.hw.mux[c])
+                            if hasattr(sensor_recup, "io_timeout_s"):
+                                sensor_recup.io_timeout_s = 0.25
+                            if hasattr(sensor_recup, "measurement_timing_budget"):
+                                sensor_recup.measurement_timing_budget = 33000
+                            self.hw.sensores[c] = sensor_recup
+                            self.fallos_consecutivos[c] = 0
+                            logger.info(f"[AUTO-RECUPERACION] Sensor en canal {c} recuperado exitosamente.")
                         except Exception:
                             pass
 
@@ -409,11 +397,15 @@ class HardwareManager:
                     self.estado_sensores[c] = "OMITIDO (--sin-sensores)"
             else:
                 try:
-                    # 1. Aislamiento inicial y desatasco de bus por hardware
-                    self.aislar_canales_mux()
-                    self.desatascar_bus_i2c()
-                    self.aislar_canales_mux()
-                    self.recrear_interfaz_i2c()
+                    # Reset inicial de hardware del multiplexor TCA9548A por GPIO 17
+                    GPIO.setup(MUX_RST_PIN, GPIO.OUT, initial=GPIO.HIGH)
+                    GPIO.output(MUX_RST_PIN, GPIO.LOW)
+                    time.sleep(0.02)
+                    GPIO.output(MUX_RST_PIN, GPIO.HIGH)
+                    time.sleep(0.05)
+
+                    self.i2c = busio.I2C(board.SCL, board.SDA)
+                    self.mux = adafruit_tca9548a.TCA9548A(self.i2c, address=MUX_ADDRESS)
 
                     print("\n" + "="*85)
                     print("         DIAGNOSTICO DE HARDWARE: ESCANEO DE SENSORES I2C (TCA9548A @ 0x70)         ")
@@ -438,33 +430,35 @@ class HardwareManager:
 
                         print(f"   -> Verificando comunicacion I2C...", end="", flush=True)
 
-                        # Inicialización protegida contra cuelgues I2C con auto-recuperación y aislamiento
-                        sensor, dist_test, err = self._conectar_sensor_con_aislamiento(canal, max_intentos=2)
-
-                        if sensor is not None:
-                            geom = GEOMETRIA_ESTANQUES.get(canal, {"vacio": DIST_VACIO_MM, "lleno": DIST_LLENO_MM})
-                            if dist_test > 8000:
-                                self.estado_sensores[canal] = f"CONECTADO PERO FUERA DE RANGO ({dist_test} mm)"
-                                print(f"\r   [!] ADVERTENCIA: Responde I2C pero lectura fuera de rango ({dist_test} mm)\n")
-                            elif abs(dist_test - geom["vacio"]) > 8:
-                                # Nivel de agua u obstáculo presente en arranque: no alterar la base vacía nominal
-                                self.distancias_base[canal] = geom["vacio"]
-                                self.estado_sensores[canal] = f"OPERATIVO (Nivel/Obstaculo en arranque, Base Nominal: {geom['vacio']} mm)"
-                                print(f"\r   [!] OPERATIVO: Nivel en arranque ({dist_test} mm), usando base nominal {geom['vacio']} mm\n")
-                                self._cache_distancias_mm[canal] = dist_test
-                                self._cache_pct[canal] = calcular_pct_canal(canal, dist_test, dist_base=geom["vacio"])
-                            else:
-                                self.distancias_base[canal] = dist_test
-                                self.estado_sensores[canal] = f"OPERATIVO (Calibrado Base: {dist_test} mm)"
-                                print(f"\r   [+] OPERATIVO: Sensor OK | Medida base calibrada: {dist_test} mm\n")
-                                self._cache_distancias_mm[canal] = dist_test
-                                self._cache_pct[canal] = calcular_pct_canal(canal, dist_test, dist_base=dist_test)
+                        try:
+                            sensor = VL53L0X(self.mux[canal])
+                            if hasattr(sensor, "io_timeout_s"):
+                                sensor.io_timeout_s = 0.25
+                            if hasattr(sensor, "measurement_timing_budget"):
+                                try:
+                                    sensor.measurement_timing_budget = 33000
+                                except Exception:
+                                    pass
 
                             self.sensores[canal] = sensor
-                        else:
+                            base = GEOMETRIA_ESTANQUES.get(canal, {}).get("vacio", 128.0)
+                            self.distancias_base[canal] = base
+                            self.estado_sensores[canal] = f"OPERATIVO (Base Nominal: {base} mm)"
+                            print(f"\r   [+] OPERATIVO: Sensor OK | Medida base nominal: {base} mm\n")
+                        except Exception as e:
                             self.sensores[canal] = None
-                            self.estado_sensores[canal] = f"FALLO CRITICO: Error I2C ({err})"
-                            print(f"\r   [X] FALLO CRITICO: Error I2C ({err}). Sensor inoperativo y aislado en bornera {born}.\n")
+                            self.estado_sensores[canal] = f"FALLO CRITICO: Error I2C ({e})"
+                            print(f"\r   [X] FALLO CRITICO: Error I2C ({e}). Sensor inoperativo en bornera {born}.\n")
+                            # Si falla, reset del multiplexor para que el canal no contamine a los siguientes
+                            try:
+                                GPIO.output(MUX_RST_PIN, GPIO.LOW)
+                                time.sleep(0.02)
+                                GPIO.output(MUX_RST_PIN, GPIO.HIGH)
+                                time.sleep(0.05)
+                                self.i2c = busio.I2C(board.SCL, board.SDA)
+                                self.mux = adafruit_tca9548a.TCA9548A(self.i2c, address=MUX_ADDRESS)
+                            except Exception:
+                                pass
 
                     print("="*85)
                     print(" RESUMEN DIAGNOSTICO DE SENSORES:")
@@ -488,199 +482,36 @@ class HardwareManager:
         """Inicia el worker thread independiente de lectura I2C."""
         self.hilo_sensores.start()
 
-    def aislar_canales_mux(self):
+    def reiniciar_bus_hardware(self):
         """
-        Fuerza la desconexión total de todos los canales del multiplexor TCA9548A
-        mediante el pin físico de reset (GPIO 17). Esto corta inmediatamente cualquier
-        línea SDA/SCL que un sensor defectuoso o colgado esté tirando a tierra.
+        Reinicia el multiplexor TCA9548A por GPIO 17 y re-conecta sensores.
         """
-        if not HARDWARE_REAL or self.skip_sensores:
-            return
+        if not HARDWARE_REAL or self.skip_sensores: return
         try:
             GPIO.setup(MUX_RST_PIN, GPIO.OUT, initial=GPIO.HIGH)
             GPIO.output(MUX_RST_PIN, GPIO.LOW)
             time.sleep(0.03)
             GPIO.output(MUX_RST_PIN, GPIO.HIGH)
-            time.sleep(0.05)
-        except Exception as e:
-            logger.error(f"[ERROR AISLAR MUX] {e}")
-
-    def _restaurar_alt0_i2c(self):
-        """Restaura la función de hardware ALT0 (I2C1) en GPIO 2 y GPIO 3."""
-        try:
-            import mmap
-            import struct
-            with open("/dev/gpiomem", "r+b") as f:
-                mem = mmap.mmap(f.fileno(), 4096)
-                gpfsel0 = struct.unpack_from("<I", mem, 0)[0]
-                gpfsel0 &= ~(0b111111 << 6)
-                gpfsel0 |= (0b100 << 6) | (0b100 << 9)
-                struct.pack_into("<I", mem, 0, gpfsel0)
-                mem.close()
-        except Exception:
-            pass
-        for cmd in [
-            ["pinctrl", "set", "2", "a0"],
-            ["pinctrl", "set", "3", "a0"],
-            ["raspi-gpio", "set", "2", "a0"],
-            ["raspi-gpio", "set", "3", "a0"],
-        ]:
+            time.sleep(0.08)
+            
             try:
-                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=0.15)
-            except Exception:
-                pass
-
-    def recrear_interfaz_i2c(self):
-        """
-        Cierra la interfaz I2C previa si existe y crea una nueva instancia limpia de busio.I2C
-        y adafruit_tca9548a.TCA9548A.
-        """
-        if not HARDWARE_REAL or self.skip_sensores:
-            return False
-        try:
-            if hasattr(self, 'i2c') and self.i2c is not None:
-                try:
-                    self.i2c.deinit()
-                except Exception:
-                    pass
-                self.i2c = None
-            self.i2c = busio.I2C(board.SCL, board.SDA)
-            self.mux = adafruit_tca9548a.TCA9548A(self.i2c, address=MUX_ADDRESS)
-            return True
-        except Exception as e:
-            logger.error(f"[ERROR RECREAR I2C/MUX] {e}")
-            return False
-
-    def desatascar_bus_i2c(self):
-        """
-        Rutina oficial NXP de 9 pulsos de reloj para liberar la línea SDA si un esclavo
-        (VL53L0X o TCA9548A) quedó colgado manteniéndola en nivel bajo.
-        """
-        if not HARDWARE_REAL or self.skip_sensores:
-            return
-        try:
-            logger.info("[RECUPERACION I2C] Ejecutando rutina de 9 pulsos de reloj para desatascar bus...")
-            if hasattr(self, 'i2c') and self.i2c is not None:
-                try:
-                    self.i2c.deinit()
-                except Exception:
-                    pass
-                self.i2c = None
-
-            PIN_SDA = 2
-            PIN_SCL = 3
-            GPIO.setup(PIN_SDA, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-            GPIO.setup(PIN_SCL, GPIO.OUT, initial=GPIO.HIGH)
-            time.sleep(0.001)
-
-            # Si SDA está en bajo, un esclavo está colgado a mitad de un byte.
-            # Se envían 9 pulsos en SCL para que complete el ciclo y libere SDA.
-            for _ in range(9):
-                GPIO.output(PIN_SCL, GPIO.LOW)
-                time.sleep(0.00002) # 20 us
-                GPIO.output(PIN_SCL, GPIO.HIGH)
-                time.sleep(0.00002)
-
-            # Generar condición STOP manual: SDA LOW -> SCL HIGH -> SDA HIGH
-            GPIO.setup(PIN_SDA, GPIO.OUT, initial=GPIO.LOW)
-            time.sleep(0.00002)
-            GPIO.output(PIN_SCL, GPIO.HIGH)
-            time.sleep(0.00002)
-            GPIO.output(PIN_SDA, GPIO.HIGH)
-            time.sleep(0.00002)
-
-            # Liberar pines GPIO 2 y 3 y restaurar ALT0 (I2C1 de hardware)
-            GPIO.cleanup([PIN_SDA, PIN_SCL])
-            self._restaurar_alt0_i2c()
-            time.sleep(0.01)
-        except Exception as e:
-            logger.error(f"[ERROR DESATASCO I2C] {e}")
-
-    def _conectar_un_sensor_directo(self, canal):
-        """Intento individual de instanciación y primera lectura en un canal."""
-        try:
-            sensor = VL53L0X(self.mux[canal], io_timeout_s=0.6)
-        except TypeError:
-            sensor = VL53L0X(self.mux[canal])
-            if hasattr(sensor, "io_timeout_s"):
-                sensor.io_timeout_s = 0.6
-
-        if hasattr(sensor, "measurement_timing_budget"):
-            try:
-                sensor.measurement_timing_budget = 40000
-            except Exception:
-                pass
-
-        try:
-            dist = sensor.range
-        except Exception:
-            # Si el sensor respondió por I2C en __init__ pero falló el primer disparo láser,
-            # no descartar el sensor; usar la distancia nominal de reposo
-            geom = GEOMETRIA_ESTANQUES.get(canal, {"vacio": DIST_VACIO_MM, "lleno": DIST_LLENO_MM})
-            dist = geom["vacio"]
-
-        return sensor, dist
-
-    def _conectar_sensor_con_aislamiento(self, canal, max_intentos=2):
-        """
-        Conecta un sensor en el canal especificado protegiendo contra cuelgues I2C.
-        Si falla o excede el timeout (1.5s), aplica rutina de 9 pulsos NXP,
-        resetea el MUX por GPIO 17 para aislar el canal y reintenta.
-        Si tras los intentos falla, aísla el canal definitivamente y refresca el bus
-        para que NO afecte a los demás canales.
-        """
-        if not HARDWARE_REAL or self.skip_sensores:
-            return None, 0, "Hardware simulado"
-
-        ultimo_err = "Desconocido"
-        for intento in range(1, max_intentos + 1):
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"probe_ch{canal}")
-            try:
-                fut = executor.submit(self._conectar_un_sensor_directo, canal)
-                sensor, dist = fut.result(timeout=1.5)
-                executor.shutdown(wait=False)
-                return sensor, dist, None
-            except concurrent.futures.TimeoutError:
-                ultimo_err = "Timeout I2C (>1.5s)"
-                executor.shutdown(wait=False)
-            except Exception as e:
-                ultimo_err = str(e)
-                executor.shutdown(wait=False)
-
-            # Recuperación: 9 pulsos al canal conectado, aislamiento por MUX RST, recrear I2C
-            self.desatascar_bus_i2c()
-            self.aislar_canales_mux()
-            self.recrear_interfaz_i2c()
-
-            if intento < max_intentos:
-                time.sleep(0.05)
-
-        # Si agotó intentos, aislar completamente antes de devolver control
-        self.aislar_canales_mux()
-        self.recrear_interfaz_i2c()
-        return None, 0, ultimo_err
-
-    def reiniciar_bus_hardware(self):
-        """
-        OPCION B MEJORADA:
-        1. Desatasca líneas SDA/SCL con 9 pulsos de reloj si están en corto/bajo.
-        2. Pulsa RST en GPIO 17 para resetear el multiplexor TCA9548A.
-        3. Re-crea la interfaz I2C y re-conecta sensores con timeouts protegidos y aislamiento.
-        """
-        if not HARDWARE_REAL or self.skip_sensores: return
-        try:
-            self.desatascar_bus_i2c()
-            self.aislar_canales_mux()
-            if not self.recrear_interfaz_i2c():
+                self.i2c = busio.I2C(board.SCL, board.SDA)
+                self.mux = adafruit_tca9548a.TCA9548A(self.i2c, address=MUX_ADDRESS)
+            except Exception as e_bus:
+                logger.error(f"[AUTO-RECUPERACION] Error re-inicializando bus/multiplexor: {e_bus}")
                 return
 
             for c in CANALES_SENSORES:
                 if c not in self.bypass_canales:
-                    sensor, dist_test, err = self._conectar_sensor_con_aislamiento(c, max_intentos=1)
-                    if sensor is not None:
+                    try:
+                        sensor = VL53L0X(self.mux[c])
+                        if hasattr(sensor, "io_timeout_s"):
+                            sensor.io_timeout_s = 0.25
+                        if hasattr(sensor, "measurement_timing_budget"):
+                            sensor.measurement_timing_budget = 33000
                         self.sensores[c] = sensor
-                        self.estado_sensores[c] = f"RECONECTADO (Post-Reset, {dist_test} mm)"
-                    else:
+                        self.estado_sensores[c] = "RECONECTADO (Post-Reset)"
+                    except Exception as err:
                         self.sensores[c] = None
                         self.estado_sensores[c] = f"ERROR POST-RESET ({err})"
             logger.info("[AUTO-RECUPERACION] Multiplexor TCA9548A y bus I2C re-inicializados correctamente.")
