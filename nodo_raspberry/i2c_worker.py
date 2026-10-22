@@ -1,5 +1,6 @@
 """Proceso exclusivo de sensores. No importa el daemon ni controla cargas."""
 import collections
+from importlib import import_module
 import json
 import os
 import signal
@@ -27,6 +28,7 @@ class BancoI2C:
         from adafruit_vl53l0x import VL53L0X
         self.gpio, self.board, self.busio = GPIO, board, busio
         self.mux_class, self.sensor_class = adafruit_tca9548a.TCA9548A, VL53L0X
+        self.sensor_modules = import_module("sensores-tof").SENSORES
         self.i2c = self.mux = None
         self.sensors = {}
         GPIO.setwarnings(False)
@@ -88,9 +90,9 @@ class BancoI2C:
             # Mantener la llamada de C3-PLC: pasar solo el canal del TCA y
             # configurar el timeout despues de crear el sensor. El supervisor
             # del proceso hijo limita cualquier bloqueo durante inicializacion.
-            sensor = self.sensor_class(self.mux[channel])
-            if hasattr(sensor, "io_timeout_s"):
-                sensor.io_timeout_s = 0.5
+            sensor = self.sensor_modules[channel].crear_sensor(
+                self.sensor_class, self.mux
+            )
             self.sensors[channel] = sensor
         distance = int(self.sensors[channel].range)
         if not 0 < distance < 8000:
@@ -156,19 +158,36 @@ def run(config, stop, bank_factory=BancoI2C, send=emit):
                     failures[c] = 0
                     last_valid = time.monotonic()
                 except Exception as exc:
+                    failures[c] += 1
+                    sensor_config = getattr(bank, "sensor_modules", {}).get(c)
+                    # Las pruebas y bancos alternativos pueden no exponer
+                    # modulos; en hardware se toma siempre la politica del canal.
+                    retry_initial = getattr(
+                        sensor_config, "REINTENTO_ERROR_INICIAL_S", 1.5
+                    )
+                    retry_max = getattr(sensor_config, "REINTENTO_ERROR_MAX_S", 30.0)
+                    retry_absent_initial = getattr(
+                        sensor_config, "REINTENTO_AUSENTE_INICIAL_S", 3.0
+                    )
+                    retry_absent_max = getattr(
+                        sensor_config, "REINTENTO_AUSENTE_MAX_S", 10.0
+                    )
                     if isinstance(exc, SensorNoDetectadoError):
-                        # Rebuscar cada 3 s, como hacia C3-PLC con sensores
-                        # desconectados. El scan no crea objetos ni carga el bus.
-                        retry[c] = time.monotonic() + 3.0
+                        # Rebuscar con backoff: un canal ausente no debe
+                        # monopolizar el bus mientras los otros siguen midiendo.
+                        delay = min(retry_absent_max,
+                                    retry_absent_initial * 2 ** min(failures[c] - 1, 10))
                     else:
-                        failures[c] += 1
-                        # C3-PLC conserva el objeto ante fallos puntuales y lo
-                        # vuelve a crear tras tres lecturas consecutivas fallidas.
-                        delay = min(3.0, 0.5 * 2 ** min(failures[c] - 1, 3))
-                        if failures[c] >= 3:
+                        # Cada canal acumula su propia espera. Al superar el
+                        # umbral se descarta solo su objeto; no se toca el bus
+                        # compartido mientras otro sensor entregue datos.
+                        delay = min(retry_max,
+                                    retry_initial * 3 ** min(failures[c] - 1, 10))
+                        recreate_after = getattr(sensor_config,
+                                                 "RECREAR_TRAS_FALLOS", 3)
+                        if failures[c] >= recreate_after:
                             bank.sensors.pop(c, None)
-                            failures[c] = 0
-                        retry[c] = time.monotonic() + delay
+                    retry[c] = time.monotonic() + delay
                     send("sample", channel=c, state="ERROR", error=str(exc)[:200])
             send("heartbeat")
             stop.wait(SAMPLE_PERIOD_S)

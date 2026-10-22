@@ -14,6 +14,7 @@ import threading
 import logging
 import os
 import sys
+from importlib import import_module
 import statistics
 import signal
 try:
@@ -47,7 +48,9 @@ SEMAFORO_2 = {"rojo": 16, "amarillo": 20, "verde": 21}
 
 MUX_ADDRESS = 0x70
 MUX_RST_PIN = 17
-CANALES_SENSORES = [0, 1, 2, 3]
+_CONFIG_SENSORES_TOF = import_module("sensores-tof")
+CANALES_SENSORES = list(_CONFIG_SENSORES_TOF.CANALES)
+CANALES_BYPASS_TOF = list(_CONFIG_SENSORES_TOF.CANALES_BYPASS)
 
 DIST_VACIO_MM = 60
 DIST_LLENO_MM = 46
@@ -159,7 +162,8 @@ class HardwareManager:
     def __init__(self, skip_sensores: bool = False, bypass_canales: list = None):
         self.skip_sensores = skip_sensores
         # Por omision se omite el Canal 2 (J20 / Estanque 1) por sensor defectuoso en placa
-        self.bypass_canales = [2] if bypass_canales is None else list(bypass_canales)
+        self.bypass_canales = (list(CANALES_BYPASS_TOF) if bypass_canales is None
+                               else list(bypass_canales))
         self._sensor_lock = threading.Lock()
         self.supervisor_i2c = None
         self.estado_sensores = {}

@@ -2,8 +2,9 @@
 
 `rtu_daemon.py` inicia automaticamente `i2c_worker.py` mediante
 `i2c_supervisor.py`. Hay un unico proceso lector. No hay que instalar ni
-ejecutar un segundo servicio. Copiar los tres archivos juntos a la Raspberry,
-ademas de la calibracion y las dependencias del proyecto.
+ejecutar un segundo servicio. Copiar los archivos del daemon y la carpeta
+`sensores-tof/` juntos a la Raspberry, ademas de la calibracion y las
+dependencias del proyecto.
 
 El hijo importa las bibliotecas I2C y posee el bus, el TCA9548A y GPIO17 (RST).
 El padre conserva bombas, luminarias, semaforos, DMA de las tiras y Modbus.
@@ -12,7 +13,10 @@ muere el padre, mediante `PR_SET_PDEATHSIG`.
 
 ## Comportamiento
 
-- Se conservan el mapa de sensores, la calibracion y el bypass de CH2/J20.
+- La carpeta `sensores-tof/` declara un modulo por estanque: canal, bornera,
+  bomba y bypass. El worker conserva el unico acceso al bus y lee los canales
+  en serie; la calibracion numerica permanece en `calibracion_estanques.json`.
+- Se conserva el bypass de CH2/J20.
 - El lector espera 0,5 s entre rondas, igual que `C3-PLC`; el intervalo reduce
   el sondeo del bus y mantiene una respuesta adecuada para niveles de agua.
 - Cada VL53L0X usa el mismo presupuesto de medicion predeterminado del driver
@@ -37,9 +41,11 @@ muere el padre, mediante `PR_SET_PDEATHSIG`.
 - La creacion usa la llamada `VL53L0X(tca[channel])` del HAL anterior; luego
   configura `io_timeout_s` si el driver expone esa propiedad. Si la calibracion
   se bloquea durante el constructor, el supervisor termina el proceso a los 4 s.
-- Un error puntual de lectura se reintenta a los 0,5, 1 y 2 s. El objeto se
-  conserva durante los dos primeros fallos y se recrea tras el tercero. Un
-  fallo individual con otros sensores operativos no reinicia el bus entero.
+- Cada sensor tiene su propio backoff. Un canal ausente se vuelve a buscar a
+  los 3, 6 y hasta 10 s; otros errores se reintentan a los 1,5, 4,5 y 13,5 s,
+  con un maximo de 30 s entre intentos. El objeto se descarta tras tres fallos
+  consecutivos y el contador vuelve a cero al recuperar una lectura valida.
+- El fallo de un canal no detiene a los otros ni reinicia el bus compartido.
 - Sin ninguna lectura valida durante 15 s, se intenta resetear el MUX y
   reconstruir el bus; tambien se hace si nunca se pudo inicializar un sensor.
   El hijo limita los resets a 3 por ventana movil de 300 s y aumenta la espera

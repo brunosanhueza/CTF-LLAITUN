@@ -1,5 +1,6 @@
 import contextlib
 import io
+import importlib
 import logging
 from pathlib import Path
 import signal
@@ -15,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from i2c_supervisor import SupervisorI2C
 import i2c_worker
 import rtu_daemon as rtu
+
+SENSORES_TOF = importlib.import_module("sensores-tof").SENSORES
 
 
 def wait_until(predicate, timeout=4):
@@ -101,6 +104,7 @@ class WorkerTests(unittest.TestCase):
         clock = ClockStop()
         class Bank:
             sensors = {}
+            sensor_modules = SENSORES_TOF
             resets = 0
             closed = False
             attempts = [0] * 4
@@ -132,7 +136,9 @@ class WorkerTests(unittest.TestCase):
         bank, messages = self.exercise(20, {0})
         self.assertEqual(bank.resets, 1)
         self.assertLess(bank.attempts[0], 5)
-        self.assertGreater(bank.attempts[1], 50)
+        # Dos canales sanos a 0,5 s por ronda producen hasta ~40 lecturas
+        # durante los 20 s del reloj virtual; el canal averiado no los bloquea.
+        self.assertGreater(bank.attempts[1], 30)
 
     def test_bus_recovery_resumes_after_budget_window(self):
         bank, _ = self.exercise(310, {0, 1, 3})
