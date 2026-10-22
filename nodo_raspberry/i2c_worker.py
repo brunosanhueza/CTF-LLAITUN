@@ -31,8 +31,17 @@ class BancoI2C:
         self.sensor_modules = import_module("sensores-tof").SENSORES
         self.i2c = self.mux = None
         self.sensors = {}
+        self._progress_callback = None
         GPIO.setwarnings(False)
         GPIO.setmode(GPIO.BCM)
+
+    def set_progress_callback(self, callback):
+        """Permite informar al supervisor qué operación I2C está activa."""
+        self._progress_callback = callback
+
+    def _progress(self, channel, stage):
+        if self._progress_callback is not None:
+            self._progress_callback(channel, stage)
 
     def reset(self):
         # RST aisla los canales; no corta la alimentacion de los sensores.
@@ -56,13 +65,11 @@ class BancoI2C:
     def _sensor_presente(self, channel):
         """Busca 0x29 detras del canal antes de inicializar el sensor."""
         channel_bus = self.mux[channel]
-        try:
-            if not channel_bus.try_lock():
-                # Como en C3-PLC: si el scan no pudo tomar el bus, probar el
-                # constructor del driver, que confirma la presencia por ID.
-                return None
-        except Exception:
-            return None
+        if not channel_bus.try_lock():
+            # No iniciar otra transaccion si no se pudo tomar el bus: el
+            # constructor volveria a consultar los mismos registros y
+            # puede dejar bloqueado al unico propietario del I2C.
+            raise OSError("No se pudo bloquear el bus I2C en CH%d" % channel)
         try:
             try:
                 addresses = channel_bus.scan()
@@ -70,10 +77,6 @@ class BancoI2C:
                 # Compatibilidad con versiones antiguas de TCA9548A.
                 addresses = self.i2c.scan()
             return 0x29 in addresses
-        except Exception:
-            # El HAL de C3-PLC trata el scan como una pista: si falla, el
-            # constructor del VL53L0X sigue siendo la prueba de presencia.
-            return None
         finally:
             try:
                 channel_bus.unlock()
@@ -82,18 +85,18 @@ class BancoI2C:
 
     def read(self, channel):
         if channel not in self.sensors:
+            self._progress(channel, "escaneo_direccion")
             presente = self._sensor_presente(channel)
             if presente is False:
                 raise SensorNoDetectadoError(
                     "No se detecto 0x29 en el canal %d del TCA9548A" % channel
                 )
-            # Mantener la llamada de C3-PLC: pasar solo el canal del TCA y
-            # configurar el timeout despues de crear el sensor. El supervisor
-            # del proceso hijo limita cualquier bloqueo durante inicializacion.
+            self._progress(channel, "inicializacion_sensor")
             sensor = self.sensor_modules[channel].crear_sensor(
                 self.sensor_class, self.mux
             )
             self.sensors[channel] = sensor
+        self._progress(channel, "lectura_rango")
         distance = int(self.sensors[channel].range)
         if not 0 < distance < 8000:
             raise ValueError("Distancia fuera de rango: %s" % distance)
@@ -120,6 +123,13 @@ def run(config, stop, bank_factory=BancoI2C, send=emit):
     last_valid = time.monotonic()
     next_reset = 0.0
     needs_reset = True
+    active_stage = {}
+
+    def report_progress(channel, stage):
+        if channel is not None:
+            active_stage[channel] = stage
+        send("progress", channel=channel, stage=stage)
+
     try:
         while not stop.is_set():
             if not enabled:
@@ -133,10 +143,13 @@ def run(config, stop, bank_factory=BancoI2C, send=emit):
                 if now >= next_reset and len(reset_times) < 3:
                     reset_times.append(now)
                     next_reset = now + min(60, 5 * 3 ** (len(reset_times) - 1))
-                    send("progress", channel=None)
+                    report_progress(None, "reinicio_bus")
                     try:
                         if bank is None:
                             bank = bank_factory()
+                            set_progress = getattr(bank, "set_progress_callback", None)
+                            if set_progress is not None:
+                                set_progress(report_progress)
                         bank.reset()
                         needs_reset = False
                     except Exception as exc:
@@ -151,7 +164,8 @@ def run(config, stop, bank_factory=BancoI2C, send=emit):
                     break
                 if time.monotonic() < retry[c]:
                     continue
-                send("progress", channel=c)
+                active_stage[c] = "lectura_sensor"
+                report_progress(c, "lectura_sensor")
                 try:
                     mm = bank.read(c)
                     send("sample", channel=c, state="OK", mm=mm, timestamp=time.monotonic())
@@ -185,10 +199,15 @@ def run(config, stop, bank_factory=BancoI2C, send=emit):
                                     retry_initial * 3 ** min(failures[c] - 1, 10))
                         recreate_after = getattr(sensor_config,
                                                  "RECREAR_TRAS_FALLOS", 3)
-                        if failures[c] >= recreate_after:
+                        # Un Remote I/O suele dejar el objeto del driver en un
+                        # estado incierto. Descartarlo ahora evita repetir
+                        # lecturas sobre ese objeto; el resto de canales sigue
+                        # usando su instancia sin reiniciar el bus.
+                        if isinstance(exc, OSError) or failures[c] >= recreate_after:
                             bank.sensors.pop(c, None)
                     retry[c] = time.monotonic() + delay
-                    send("sample", channel=c, state="ERROR", error=str(exc)[:200])
+                    detalle = "%s: %s" % (active_stage.get(c, "lectura_sensor"), exc)
+                    send("sample", channel=c, state="ERROR", error=detalle[:200])
             send("heartbeat")
             stop.wait(SAMPLE_PERIOD_S)
     finally:

@@ -33,6 +33,7 @@ class SupervisorI2C(threading.Thread):
         self._starts = collections.deque()
         self._quarantine = {}
         self._active_channel = None
+        self._active_stage = None
         self.starts = 0
 
     def snapshot(self):
@@ -62,7 +63,11 @@ class SupervisorI2C(threading.Thread):
             channel = message.get("channel")
             if channel is not None and (type(channel) is not int or channel not in range(4)):
                 raise ValueError("Canal I2C desconocido")
+            stage = message.get("stage", "")
+            if not isinstance(stage, str) or len(stage) > 64:
+                raise ValueError("Etapa I2C invalida")
             self._active_channel = channel
+            self._active_stage = stage or None
         elif kind == "sample":
             c = int(message["channel"])
             if c not in self._samples or c in self.bypass:
@@ -87,7 +92,12 @@ class SupervisorI2C(threading.Thread):
                          (" (%s)" % s["error"]) if s["error"] else "")
         elif kind == "bus_error":
             self._invalidate("ERROR", str(message.get("error", ""))[:200])
-        elif kind != "heartbeat":
+        elif kind == "heartbeat":
+            # El lector completó una ronda; si vuelve a bloquearse se tomará
+            # la etapa del siguiente evento progress, no la del canal anterior.
+            self._active_channel = None
+            self._active_stage = None
+        else:
             raise ValueError("Mensaje I2C desconocido")
 
     def _collect(self):
@@ -117,6 +127,7 @@ class SupervisorI2C(threading.Thread):
         last_message = time.monotonic()
         last_sample = last_message
         self._active_channel = None
+        self._active_stage = None
         while not self._stop_event.is_set() and not self._restart.is_set():
             if p.poll() is not None:
                 raise RuntimeError("lector terminado (codigo %s)" % p.returncode)
@@ -124,7 +135,13 @@ class SupervisorI2C(threading.Thread):
             if now - last_message > self.timeout:
                 if self._active_channel is not None:
                     self._quarantine[self._active_channel] = now + 15.0
-                raise TimeoutError("lector I2C sin progreso")
+                if self._active_channel is None:
+                    detalle = " durante %s" % self._active_stage if self._active_stage else ""
+                else:
+                    detalle = " en CH%d" % self._active_channel
+                    if self._active_stage:
+                        detalle += " durante %s" % self._active_stage
+                raise TimeoutError("lector I2C sin progreso%s" % detalle)
             if now - last_sample > self.data_timeout:
                 raise TimeoutError("ningun sensor I2C entrega datos validos")
             ready, _, _ = select.select([p.stdout], [], [], 0.1)

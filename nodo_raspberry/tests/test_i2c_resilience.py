@@ -85,6 +85,16 @@ class SupervisorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             supervisor._message({"kind": "sample", "channel": 0, "state": "OK", "mm": 8190})
 
+    def test_progress_records_channel_and_operation_stage(self):
+        supervisor = SupervisorI2C()
+        supervisor._message({"kind": "progress", "channel": 3,
+                             "stage": "lectura_rango"})
+        self.assertEqual(supervisor._active_channel, 3)
+        self.assertEqual(supervisor._active_stage, "lectura_rango")
+        supervisor._message({"kind": "heartbeat"})
+        self.assertIsNone(supervisor._active_channel)
+        self.assertIsNone(supervisor._active_stage)
+
     def test_delayed_message_does_not_refresh_old_sample(self):
         supervisor = SupervisorI2C(stale=1)
         supervisor._message({"kind": "sample", "channel": 0, "state": "OK",
@@ -157,6 +167,62 @@ class WorkerTests(unittest.TestCase):
                            send=lambda kind, **kw: messages.append(kind))
         self.assertEqual(factory.call_count, 3)
         self.assertIn("heartbeat", messages)
+
+    def test_i2c_scan_error_does_not_fall_through_to_sensor_constructor(self):
+        class Channel:
+            unlocked = False
+            def try_lock(self): return True
+            def scan(self): raise OSError(121, "Remote I/O error")
+            def unlock(self): self.unlocked = True
+
+        channel = Channel()
+        class SensorModule:
+            @staticmethod
+            def crear_sensor(*_args):
+                raise AssertionError("No se debe reintentar el constructor tras fallar scan")
+
+        bank = object.__new__(i2c_worker.BancoI2C)
+        bank.mux = [channel]
+        bank.i2c = object()
+        bank.sensors = {}
+        bank.sensor_modules = {0: SensorModule}
+        bank.sensor_class = object
+        stages = []
+        bank._progress_callback = lambda channel, stage: stages.append((channel, stage))
+        with self.assertRaisesRegex(OSError, "Remote I/O error"):
+            bank.read(0)
+        self.assertTrue(channel.unlocked)
+        self.assertEqual(stages, [(0, "escaneo_direccion")])
+
+    def test_remote_io_discards_only_the_failed_sensor_object(self):
+        class ClockStop:
+            now = 0.0
+            def is_set(self): return self.now >= 0.1
+            def wait(self, seconds): self.now += seconds
+
+        class Bank:
+            sensor_modules = SENSORES_TOF
+            def __init__(self):
+                self.sensors = {0: object(), 1: object(), 3: object()}
+            def reset(self): pass
+            def read(self, channel):
+                if channel == 0:
+                    raise OSError(121, "Remote I/O error")
+                return 100
+            def close(self): pass
+
+        bank = Bank()
+        messages = []
+        i2c_worker.run(
+            {"bypass": [2]}, ClockStop(), bank_factory=lambda: bank,
+            send=lambda kind, **kw: messages.append({"kind": kind, **kw}),
+        )
+        self.assertNotIn(0, bank.sensors)
+        self.assertIn(1, bank.sensors)
+        self.assertIn(3, bank.sensors)
+        self.assertTrue(any(m.get("state") == "ERROR" and
+                            "Remote I/O error" in m.get("error", "")
+                            for m in messages))
 
 
 class GPIO:
