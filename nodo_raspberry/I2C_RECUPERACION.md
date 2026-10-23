@@ -1,0 +1,112 @@
+# Recuperacion del lector I2C
+
+`rtu_daemon.py` inicia automaticamente `i2c_worker.py` mediante
+`i2c_supervisor.py`. Hay un unico proceso lector. No hay que instalar ni
+ejecutar un segundo servicio. Copiar los archivos del daemon y la carpeta
+`sensores-tof/` juntos a la Raspberry, ademas de la calibracion y las
+dependencias del proyecto.
+
+El hijo importa las bibliotecas I2C y posee el bus, el TCA9548A y GPIO17 (RST).
+El padre conserva bombas, luminarias, semaforos, DMA de las tiras y Modbus.
+El hijo nunca ejecuta `GPIO.cleanup()` global. En Linux termina tambien si
+muere el padre, mediante `PR_SET_PDEATHSIG`.
+
+## Comportamiento
+
+- La carpeta `sensores-tof/` declara un modulo por estanque: canal, bornera,
+  bomba y bypass. El worker conserva el unico acceso al bus y lee los canales
+  en serie; la calibracion numerica permanece en `calibracion_estanques.json`.
+- Se conserva el bypass de CH2/J20.
+- El lector espera 0,5 s entre rondas, igual que `C3-PLC`; el intervalo reduce
+  el sondeo del bus y mantiene una respuesta adecuada para niveles de agua.
+- Cada VL53L0X usa el mismo presupuesto de medicion predeterminado del driver
+  (33 ms) y el mismo timeout I2C de 0,5 s. Las distancias vacio/lleno siguen
+  siendo propias de cada estanque.
+- Cada operacion debe producir progreso en menos de 4 segundos. Al excederlo,
+  el supervisor solicita terminar al hijo, espera 0,5 s y escala a SIGKILL con
+  otra espera de 0,5 s. Solo crea otro cuando ha recogido al anterior. Si el
+  kernel no lo termina, queda degradado sin crear procesos adicionales.
+- El canal en el que se bloqueo queda en cuarentena por 15 s. El nuevo hijo
+  puede atender a los otros mientras tanto.
+- Hay como maximo 5 arranques por ventana movil de 30 s, contando tambien
+  intentos de arranque fallidos. Esperas entre intentos: 1, 2, 4 y 8 segundos.
+  Agotado el presupuesto, se espera hasta recuperar una plaza en la ventana
+  (hasta 30 s desde el primer intento).
+- Si el hijo sigue enviando latidos pero no consigue ninguna medicion valida
+  durante 20 s, el supervisor tambien lo reemplaza. Asi un lector que espera
+  internamente antes de volver a resetear el bus no queda vivo sin medir.
+- Antes de crear un sensor se busca su direccion 0x29 en el canal TCA, como en
+  `C3-PLC/hal.py`. Si no aparece, ese canal se vuelve a buscar cada 3 s. Si el
+  escaneo falla, se intenta igualmente el constructor del driver.
+- La creacion usa la llamada `VL53L0X(tca[channel])` del HAL anterior; luego
+  configura `io_timeout_s` si el driver expone esa propiedad. Si la calibracion
+  se bloquea durante el constructor, el supervisor termina el proceso a los 4 s.
+- Cada sensor tiene su propio backoff. Un canal ausente se vuelve a buscar a
+  los 3, 6 y hasta 10 s; otros errores se reintentan a los 1,5, 4,5 y 13,5 s,
+  con un maximo de 30 s entre intentos. El objeto se descarta tras tres fallos
+  consecutivos y el contador vuelve a cero al recuperar una lectura valida.
+- El fallo de un canal no detiene a los otros ni reinicia el bus compartido.
+- Sin ninguna lectura valida durante 15 s, se intenta resetear el MUX y
+  reconstruir el bus; tambien se hace si nunca se pudo inicializar un sensor.
+  El hijo limita los resets a 3 por ventana movil de 300 s y aumenta la espera
+  hasta 60 s; el supervisor lo reemplaza si completa 20 s sin mediciones.
+- Una medicion de mas de 4 s se marca OBSOLETO, aunque el hijo siga vivo.
+  Se conserva el ultimo valor en memoria para diagnostico, con su timestamp.
+- El control no espera al hijo: consume una copia de RAM y sigue enviando
+  HR40 durante la recuperacion.
+
+## Datos al PLC
+
+HR21..HR28 mantienen el orden RAW/% por estanque. Un canal con dato invalido
+no se escribe: conserva el ultimo valor publicado. HR41 vale 1 si falta algun
+sensor habilitado o falla la escritura de telemetria, y 0 cuando todas esas
+condiciones son correctas. El bypass intencional conserva su valor nominal.
+Los bits de nivel alto de canales invalidos no se borran al actualizar HR0.
+
+El PLC debe interpretar HR41 != 0 como dato de sensores no confiable. HR40
+indica vida de comunicaciones, no salud de los sensores. No se ha cambiado la
+logica de bombeo por fallo I2C: sigue a cargo del PLC. Verificar en TIA la
+reaccion deseada antes de usar el sistema con agua. La web actual no lee HR41;
+puede seguir mostrando el ultimo nivel hasta adaptar su telemetria.
+
+Los fallos de lectura Modbus apagan las bombas, incluso en modo manual. El
+cierre bloquea nuevas activaciones, detiene trabajadores y luego libera los
+recursos. No se reinicializan tiras ni DMA durante una recuperacion I2C.
+
+## Ejecucion y diagnostico
+
+Desde `nodo_raspberry`, con el mismo entorno y permisos usados anteriormente:
+
+```bash
+python3 rtu_daemon.py --con-sensores
+```
+
+El modo normal muestra la tabla de barras al arrancar y cada 10 s. Para
+refrescarla cada 2 s durante el diagnostico:
+
+```bash
+RTU_TELEMETRIA=1 python3 rtu_daemon.py --con-sensores
+# Equivalente para diagnostico:
+python3 test_daemon.py --con-sensores
+```
+
+`RTU_TELEMETRIA=0` desactiva esa tabla; un numero distinto de 0 configura el
+intervalo en segundos. `--sin-sensores` sigue siendo una simulacion explicita:
+no crea un lector.
+No ejecutar a la vez `main.py`, calibradores ni otras herramientas I2C sobre
+la maqueta. El supervisor evita duplicar sus propios hijos; no coordina con
+programas externos.
+
+## Verificacion sin hardware
+
+Desde la raiz del repositorio:
+
+```bash
+python3 -m unittest discover -s nodo_raspberry/tests -v
+```
+
+Las pruebas usan GPIO/PLC falsos, un reloj virtual y procesos que se bloquean
+o terminan deliberadamente. No conectan al PLC ni operan cargas fisicas.
+Queda pendiente validar en Raspberry desconexion/reconexion real, RST de la
+placa, versiones instaladas y recuperacion ante ruido/alimentacion. RST del
+MUX aisla canales, pero no reinicia la alimentacion de los VL53L0X.
