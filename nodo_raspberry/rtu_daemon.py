@@ -327,10 +327,7 @@ class HardwareManager:
                 
                 if len(self.canales_ws) > 0:
                     for i in range(self.n_leds_tira):
-                        if (i % 30) >= 25:
-                            ws.ws2811_led_set(self.canales_ws[0], i, apagado)
-                        else:
-                            ws.ws2811_led_set(self.canales_ws[0], i, c1 if i < encendidos else apagado)
+                        ws.ws2811_led_set(self.canales_ws[0], i, c1 if i < encendidos else apagado)
                 if len(self.canales_ws) > 1:
                     for i in range(self.n_leds_tira):
                         ws.ws2811_led_set(self.canales_ws[1], i, c2 if i < encendidos else apagado)
