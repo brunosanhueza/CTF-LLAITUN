@@ -61,10 +61,10 @@ DIST_LLENO_MM = 46
 # Canal 2: Estanque 1 (J20, Bomba P1 - Sensor físico defectuoso / Bypass)
 # Canal 3: Estanque 3 (J21, Bomba P3) - Vacío: 60 mm,  80%: 42.4 mm, Lleno (100%): 38.0 mm (Delta 22 mm)
 GEOMETRIA_ESTANQUES = {
-    0: {"vacio": 119.0, "lleno": 88.0},   # Canal 0: Estanque 2 (119 mm = reposo 0%)
-    1: {"vacio": 99.0,  "lleno": 68.0},   # Canal 1: Estanque 4 (99 mm = reposo 0%)
-    2: {"vacio": 150.0, "lleno": 116.25}, # Canal 2: Estanque 1 (Bypass)
-    3: {"vacio": 60.0,  "lleno": 38.0},   # Canal 3: Estanque 3 (42 mm = 81.8%)
+    0: {"vacio": 128.0, "lleno": 94.0},   # Canal 0: Estanque 2 (128 mm = vacío 0% en el PLC)
+    1: {"vacio": 99.0,  "lleno": 65.0},   # Canal 1: Estanque 4 (99 mm = vacío 0% en el PLC)
+    2: {"vacio": 150.0, "lleno": 116.0},  # Canal 2: Estanque 1 (Bypass)
+    3: {"vacio": 71.0,  "lleno": 38.0},   # Canal 3: Estanque 3 (71 mm = vacío 0% en el PLC)
 }
 
 CALIB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibracion_estanques.json")
