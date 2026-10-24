@@ -355,12 +355,42 @@ class HardwareManager:
 
     def actualizar_simulacion(self, bombas_activas):
         if not HARDWARE_REAL or self.skip_sensores:
+            ahora = time.monotonic()
+            dt = ahora - getattr(self, '_ultimo_tiempo_sim', ahora)
+            self._ultimo_tiempo_sim = ahora
+            if dt <= 0 or dt > 5.0:
+                dt = 1.0
+
             if getattr(self, 'override_niveles', None) is not None:
                 self.niveles_simulados = self.override_niveles.copy()
             else:
-                tasa = 1.6 if bombas_activas else -0.5
-                for i in range(4):
-                    self.niveles_simulados[i] = max(0.0, min(105.0, self.niveles_simulados[i] + tasa))
+                # Dinámica de fluidos real calibrada:
+                # - 18 segundos de 0% a 100% -> 100.0 / 18.0 = 5.556% por segundo con bomba activa
+                # - Drenaje gradual cuando la bomba se apaga: ~3.33% por segundo (vaciado en ~30s)
+                # - Límite de seguridad estimado: 75% (a los 13.5 segundos de llenado continuo)
+                TASA_LLENADO_S = 100.0 / 18.0
+                TASA_DRENAJE_S = 100.0 / 30.0
+
+                # Mapeo de canal I2C al índice de bomba en self.estado_bombas:
+                # Canal 0 (Estanque 2) -> Bomba P2 (idx 1)
+                # Canal 1 (Estanque 4) -> Bomba P4 (idx 3)
+                # Canal 2 (Estanque 1) -> Bomba P1 (idx 0)
+                # Canal 3 (Estanque 3) -> Bomba P3 (idx 2)
+                mapa_canal_bomba = {0: 1, 1: 3, 2: 0, 3: 2}
+
+                for c in range(4):
+                    if c in self.bypass_canales:
+                        self.niveles_simulados[c] = 0.0
+                        continue
+                    idx_bomba = mapa_canal_bomba.get(c, c)
+                    bomba_on = self.estado_bombas[idx_bomba] if idx_bomba < len(self.estado_bombas) else False
+
+                    if bomba_on:
+                        delta = TASA_LLENADO_S * dt
+                    else:
+                        delta = -TASA_DRENAJE_S * dt
+
+                    self.niveles_simulados[c] = max(0.0, min(100.0, round(self.niveles_simulados[c] + delta, 2)))
 
     def limpiar(self):
         if self.supervisor_i2c is not None:
@@ -767,13 +797,14 @@ class RtuHardwareGateway:
 
 def resolver_modo_sensores():
     """
-    Permite saltearse los sensores I2C por CLI (--sin-sensores, -s),
-    por variable de entorno (SKIP_SENSORES=1), o interactivamente al arrancar.
+    Permite saltearse los sensores I2C por CLI (--virtual, --sin-sensores, --skip-sensors, -s, -v),
+    por variable de entorno (SKIP_SENSORES=1 o VIRTUAL=1), o interactivamente al arrancar.
     """
-    if os.environ.get("SKIP_SENSORES", "0").lower() in ("1", "true", "yes", "s"):
+    if os.environ.get("SKIP_SENSORES", "0").lower() in ("1", "true", "yes", "s") or \
+       os.environ.get("VIRTUAL", "0").lower() in ("1", "true", "yes", "s"):
         return True
     for arg in sys.argv[1:]:
-        if arg in ("--sin-sensores", "--skip-sensors", "-s"):
+        if arg in ("--virtual", "-v", "--sin-sensores", "--skip-sensors", "-s"):
             return True
         if arg in ("--con-sensores", "-c"):
             return False
