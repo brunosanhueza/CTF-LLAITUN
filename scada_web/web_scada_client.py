@@ -47,7 +47,16 @@ class WebScadaClient:
                     # Calcular el Promedio Móvil para dar efecto de telemetría "En Vivo" sin saltos bruscos
                     for i in range(4):
                         pct_values = [regs_niveles[1], regs_niveles[3], regs_niveles[5], regs_niveles[7]]
-                        val_crudo = (pct_values[i] / 10.0) if pct_values[i] > 100 else float(pct_values[i])
+                        val = pct_values[i]
+                        # Filtrar underflows/anomalías de 16 bits sin signo (ej. 65532 = -4 en el PLC)
+                        if val >= 60000:
+                            val_crudo = 0.0
+                        elif val > 100:
+                            val_crudo = val / 10.0
+                        else:
+                            val_crudo = float(val)
+                        
+                        val_crudo = max(0.0, min(100.0, val_crudo))
                         self.historial_niveles[i].append(val_crudo)
                         
                         # Mantener el buffer en el tamaño máximo
