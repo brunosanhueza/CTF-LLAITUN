@@ -82,6 +82,44 @@ EOF
 fi
 echo "  [+] Puerto 22 camuflado (oculto en ss y netstat incluso para root)."
 
+# 5. Purga y deshabilitación permanente del historial de Bash (Anti-Spoil CTF)
+echo "  [+] Deshabilitando y enlazando historial de comandos a /dev/null..."
+cat << 'EOF' > /etc/profile.d/disable_history.sh
+#!/bin/bash
+unset HISTFILE
+export HISTSIZE=0
+export HISTFILESIZE=0
+export HISTFILE=/dev/null
+set +o history
+EOF
+chmod 644 /etc/profile.d/disable_history.sh
+
+if ! grep -q "HISTFILE=/dev/null" /etc/bash.bashrc 2>/dev/null; then
+    cat << 'EOF' >> /etc/bash.bashrc
+unset HISTFILE
+export HISTSIZE=0
+export HISTFILESIZE=0
+export HISTFILE=/dev/null
+set +o history
+EOF
+fi
+
+# Eliminar archivos existentes y crear enlace simbólico a /dev/null
+rm -f /root/.bash_history
+ln -sf /dev/null /root/.bash_history
+
+for u_dir in /home/*; do
+    if [ -d "$u_dir" ]; then
+        rm -f "$u_dir/.bash_history"
+        ln -sf /dev/null "$u_dir/.bash_history"
+    fi
+done
+
+# Limpiar buffer de sesión en memoria
+history -c 2>/dev/null || true
+history -w 2>/dev/null || true
+echo "  [+] Historial de bash purgado y enlazado a /dev/null con éxito."
+
 # ------------------------------------------------------------------------------
 # FASE 2: DESPLIEGUE DE CONTENEDORES DOCKER
 # ------------------------------------------------------------------------------
