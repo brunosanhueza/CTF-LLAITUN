@@ -36,7 +36,12 @@ fi
 echo "operador_it:CiB3R1Ab{0P3R4DOR2026_67}" | chpasswd
 echo "  [+] Contraseña de 'operador_it' configurada con éxito."
 
-# 2. Configurar Escalada de Privilegios (PrivEsc via sudo gcc)
+# 2. Instalar gcc si no existe y configurar Escalada de Privilegios (PrivEsc via sudo gcc)
+if ! command -v gcc >/dev/null 2>&1 || [ ! -x "/usr/bin/gcc" ]; then
+    echo "  [+] Instalando paquete 'gcc' para el vector de escalada de privilegios..."
+    apt-get update -y && apt-get install -y --no-install-recommends gcc
+fi
+
 echo "  [+] Configurando permisos de Sudoers (gcc wrapper)..."
 echo "operador_it ALL=(root) NOPASSWD: /usr/bin/gcc" > /etc/sudoers.d/operador_it
 chmod 0440 /etc/sudoers.d/operador_it

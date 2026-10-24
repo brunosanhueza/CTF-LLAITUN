@@ -17,6 +17,12 @@ fi
 echo "operador_it:CiB3R1Ab{0P3R4DOR2026_67}" | chpasswd
 
 # 2. Configurar la Escalada de Privilegios (PrivEsc)
+# Asegurar que gcc esté instalado en el sistema
+if ! command -v gcc >/dev/null 2>&1 || [ ! -x "/usr/bin/gcc" ]; then
+    echo "[*] Instalando paquete 'gcc' para el vector de escalada de privilegios..."
+    apt-get update -y && apt-get install -y --no-install-recommends gcc
+fi
+
 # Permitimos a operador_it correr GCC como root sin contraseña
 echo "[*] Configurando Sudoers para PrivEsc (gcc wrapper)..."
 echo "operador_it ALL=(root) NOPASSWD: /usr/bin/gcc" > /etc/sudoers.d/operador_it
