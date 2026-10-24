@@ -173,7 +173,7 @@ class HardwareManager:
         
         self.modo_manual_bombas = False
         self.estado_bombas = [False, False, False, False]
-        self.niveles_simulados = [25.0, 25.0, 25.0, 25.0]
+        self.niveles_simulados = [0.0, 0.0, 0.0, 0.0]
         self.ultimo_latido_sensores = time.monotonic()
 
         # Distancias base de reposo (Auto-tara / Linea base)
